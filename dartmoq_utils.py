@@ -13,7 +13,6 @@ import re
 import time
 import gc
 
-from CMoE_model import *
 from gptq_utils import GPTQ, Quantizer, find_layers
 
 

@@ -9,12 +9,10 @@ import os
 
 import copy
 
-from CMoE_utils import *
-from CMoE_model import *
-from CMoE_sequential import *
+from dartmoq_utils import *
+from dartmoq_sequential import *
 from sft_utils import simple_sft
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from eval_cmoe import cmoe_ppl_eval, load_model
+from eval_dartmoq import cmoe_ppl_eval, load_model
 
 def save_results(file_name, results):
     if results is not str:
@@ -129,14 +127,6 @@ if __name__ == '__main__':
         print(carved_model)
         carved_model.save_pretrained(carved_save_dir)
         tokenizer.save_pretrained(carved_save_dir)
-        if carved_model.config.model_type == 'qwen3':
-            import json
-            with open(os.path.join(carved_save_dir, 'config.json'), 'r') as f:
-                config = json.load(f)
-                config['model_type'] = 'qwen3_moe'
-                config['architectures'][0] = 'Qwen3MoEForCausalLM'
-            with open(os.path.join(carved_save_dir, 'config.json'), 'w') as f:
-                json.dump(config, f, indent=4)
     
     # print(carved_model)
 

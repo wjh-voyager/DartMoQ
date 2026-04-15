@@ -11,8 +11,7 @@ import os
 
 import copy
 
-from CMoE_utils import *
-from CMoE_model import *
+from dartmoq_utils import *
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 @torch.no_grad()
