@@ -1,0 +1,11 @@
+__pycache__/
+plot/
+result_logs/
+test/
+model/
+logs/
+
+run.*.sh
+run.sh
+*.json
+*.csv
