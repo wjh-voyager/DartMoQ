@@ -1,4 +1,5 @@
 # Adapted from https://github.com/IST-DASLab/gptq
+import gc
 import math
 import time
 
@@ -155,6 +156,7 @@ class GPTQ:
         self.H = torch.zeros((self.columns, self.columns), device=self.dev)
         self.nsamples = 0
 
+    @torch.no_grad()
     def add_batch(self, inp, out):
         if DEBUG:
             self.inp1 = inp
@@ -174,6 +176,7 @@ class GPTQ:
         self.H += inp.matmul(inp.t()) # [K, K]
         # print(self.layer, inp.shape, self.nsamples, self.H)
 
+    @torch.no_grad()
     def fasterquant(
         self, name: str, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, update=True
     ):
@@ -292,6 +295,8 @@ class GPTQ:
             del self.Losses
         if hasattr(self, 'Trace') and self.Trace is not None:
             del self.Trace
+        # gc.collect()
+        # torch.cuda.empty_cache()
 
 # Find all layers of a certain type in a given module.
 def find_layers(module: nn.Module, filters: list[str]=[], layers=[nn.Linear], name=''):

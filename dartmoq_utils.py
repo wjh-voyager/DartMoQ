@@ -16,7 +16,7 @@ import gc
 
 from gptq_utils import GPTQ, Quantizer, find_layers
 
-
+QBATCH = 256
 DEV = torch.device('cuda:0')
 
 @torch.no_grad()
@@ -26,7 +26,8 @@ def analyze_experts_activation(layer, layer_idx, inps, K, save_path=None):
     total_samples = batch_size * seq_len
 
     activation_markers = torch.zeros(layer.mlp.gate.weight.shape[0]).to(inps.device)
-    top_indices, top_values, _ = layer.mlp.gate(inps)
+    with torch.no_grad():
+        top_indices, top_values, _ = layer.mlp.gate(inps)
 
     for i in range(total_samples):
         activation_markers[top_indices[i]] += 1.0
@@ -253,7 +254,7 @@ def lowrank_compress_svd(weight_matrix, lowrank_sparsity, save_path=None):
     return low_rank_matrix.to(weight_matrix.dtype)
 
 @torch.no_grad()
-def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, save_path=None):
+def analyze_quant_outlier(layer, layer_idx, hidden_states, ori_expert_num, if_dense=True, save_path=None):
     print(f"reconstruct moe from layer {layer_idx}")
     nsample = hidden_states.shape[0]
 
@@ -267,10 +268,10 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, sav
     
     for ff in filters:
         qmodule_all = find_layers(layer, filters=[ff])
-        qbatch = 64
+        qbatch = min(QBATCH, ori_expert_num)
 
         for qmi in range(0, len(qmodule_all.keys()), qbatch):
-            tick0 = time.time()   
+            tick0 = time.time()
 
             qmodule = {k: qmodule_all[k] for k in list(qmodule_all.keys())[qmi: qmi + qbatch]}
             if len(qmodule.keys()) == 0:
@@ -283,7 +284,7 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, sav
 
             def add_batch(name):
                 def tmp(_, inp, out):
-                    gptq[name].add_batch(inp[0].data, out.data)
+                    gptq[name].add_batch(inp[0].data.detach(), out.data.detach())
                 return tmp
             handles = []
             for name in qmodule.keys():
@@ -292,12 +293,15 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, sav
             for isample in range(nsample):
                 if split_name in filters:
                     ffn_sample = hidden_states[isample].unsqueeze(0)
-                    layer.mlp(ffn_sample)
+                    with torch.no_grad():
+                        layer.mlp(ffn_sample)
                 else:
                     assert False, f"Not quantize {name}"
 
             for handle in handles:
                 handle.remove()
+            del handles
+
             for name in qmodule.keys():
                 loss[name] = gptq[name].fasterquant(name=f"layer_idx.{layer_idx}."+name, groupsize=groupsize, actorder=act_order, static_groups=static_groups, update=False)
                 gptq[name].free()
@@ -305,15 +309,18 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, sav
             
             tick1 = time.time()
             print(f"Simulate quant to find outliers, layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} bits: {wbits} time: {tick1 - tick0}")
+            del qmodule
 
         del qmodule_all
-    
+
+    del gptq
+
     # print(loss)
     all_rates = []
     if if_dense:
-        assert n == 1, "dense model n == 1"
-    for expert_idx in range(n):
-        if n == 1:
+        assert ori_expert_num == 1, "dense model n == 1"
+    for expert_idx in range(ori_expert_num):
+        if ori_expert_num == 1:
             u = f'mlp.up_proj'
             g = f'mlp.gate_proj'
             d = f'mlp.down_proj'
@@ -324,10 +331,14 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, sav
         
         up_proj_loss = torch.sum(loss[u], dim=1)
         gate_proj_loss = torch.sum(loss[g], dim=1)
-        down_proj_loss = torch.sum(loss[d], dim=1)
+        # down_proj_loss = torch.sum(loss[d], dim=1)
         # print(up_proj_loss.shape, gate_proj_loss.shape, down_proj_loss.shape)
         all_rates.append(up_proj_loss + gate_proj_loss)
         # rates = up_proj_loss / up_proj_loss.mean() + gate_proj_loss / gate_proj_loss.mean()
+        
+        del up_proj_loss, gate_proj_loss
+        # del down_proj_loss
+
     # print(f"Layer {layer_idx}, neural loss rates: ", all_rates)
 
     if save_path:
@@ -364,10 +375,14 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, n, if_dense=True, sav
         plt.savefig(save_path)
         plt.close()
     
+    del loss
+    torch.cuda.empty_cache()
+    gc.collect()
+
     return all_rates
 
 @torch.no_grad()
-def quant_layer_mix_precision(layer, layer_idx, quant_attn, slice_expert_num, 
+def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_expert_num,
                 attn_hidden_states, ffn_hidden_states, attention_mask, position_ids, position_embeddings, 
                 qscheme):
     print(f"Quantize layer {layer_idx}")
@@ -390,10 +405,10 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, slice_expert_num,
 
     for ff in filters:
         qmodule_all = find_layers(layer, filters=[ff])
-        qbatch = 64
+        qbatch = min(QBATCH, n_experts)
 
         for qmi in range(0, len(qmodule_all.keys()), qbatch):
-            tick0 = time.time()   
+            tick0 = time.time()
 
             qmodule = {k: qmodule_all[k] for k in list(qmodule_all.keys())[qmi: qmi + qbatch]}
             # print("Quant modules", ff, qmodule.keys())
@@ -421,7 +436,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, slice_expert_num,
 
             def add_batch(name):
                 def tmp(_, inp, out):
-                    gptq[name].add_batch(inp[0].data, out.data)
+                    gptq[name].add_batch(inp[0].data.detach(), out.data.detach())
                 return tmp
             handles = []
             for name in qmodule.keys():
@@ -431,24 +446,29 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, slice_expert_num,
                 if split_name in attn_filters:
                     attn_sample = attn_hidden_states[isample].unsqueeze(0)
                     try:
-                        layer.self_attn(
-                            hidden_states=attn_sample, 
-                            attention_mask=attention_mask, 
-                            position_ids=position_ids,
+                        with torch.no_grad():
+                            layer.self_attn(
+                                hidden_states=attn_sample, 
+                                attention_mask=attention_mask, 
+                                position_ids=position_ids,
                             position_embeddings=position_embeddings)
                     except:
-                        layer.self_attn(
-                            hidden_states=attn_sample, 
-                            attention_mask=attention_mask, 
-                            position_ids=position_ids)
+                        with torch.no_grad():
+                            layer.self_attn(
+                                hidden_states=attn_sample, 
+                                attention_mask=attention_mask, 
+                                position_ids=position_ids)
                 elif split_name in ffn_filters:
                     ffn_sample = ffn_hidden_states[isample].unsqueeze(0)
-                    layer.mlp(ffn_sample)
+                    with torch.no_grad():
+                        layer.mlp(ffn_sample)
                 else:
                     assert False, f"Not quantize {name}"
 
             for handle in handles:
                 handle.remove()
+            del handles
+
             for name in qmodule.keys():
                 loss[name] = gptq[name].fasterquant(name=f"layer_idx.{layer_idx}."+name, groupsize=groupsize, actorder=act_order, static_groups=static_groups)
                 gptq[name].free()
@@ -457,5 +477,10 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, slice_expert_num,
             tick1 = time.time()
             # print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} bits: {bit} time: {tick1 - tick0} loss: {loss[name].sum()}")
             print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0} loss: {loss[name].sum()}")
+            del qmodule
 
         del qmodule_all
+    
+    del loss, gptq
+    torch.cuda.empty_cache()
+    gc.collect()

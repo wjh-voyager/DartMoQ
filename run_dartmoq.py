@@ -11,7 +11,7 @@ import copy
 
 from dartmoq_utils import *
 from dartmoq_sequential import *
-from sft_utils import simple_sft
+# from sft_utils import simple_sft
 from eval_dartmoq import cmoe_ppl_eval, load_model
 
 def save_results(file_name, results):
@@ -44,16 +44,8 @@ if __name__ == '__main__':
     parser.add_argument(        '--nsamples', type=int, default=128,
         help='Number of Fine-tuning data for CMoE.'
     )
-    parser.add_argument(        '--extra-lr',
-        type=float, default=0.001, 
-        help='Initial learning rate for extra scale for router.'
-    )
     parser.add_argument(        '--k-act', type=int, default=10,
         help='TopK number for the ATopK. K_a in paper.'
-    )
-    parser.add_argument(        '--bias-speed',
-        type=float, default=0.001, 
-        help='Bias update speed for load balancing. Gamma in paper.'
     )
     parser.add_argument(        '--nexperts', type=int, default=16,
         help='Total number of experts. N in paper.'
@@ -63,12 +55,6 @@ if __name__ == '__main__':
     )
     parser.add_argument(        '--nshared', type=int, default=2,
         help='Number of shared experts.'
-    )
-    parser.add_argument(        '--epoch', type=int, default=0,
-        help='SFT epoch for CMoE.'
-    )
-    parser.add_argument(        '--sft-bsz', type=int, default=1,
-        help='SFT batch size for CMoE.'
     )
     parser.add_argument(        '--carve-bsz', type=int, default=1,
         help='Carve batch size for CMoE.'
@@ -87,11 +73,8 @@ if __name__ == '__main__':
         type=str, default="quant_outlier",
         help='Rank mode for MoE reconstruction. activation|quant_outlier|random|neuron_index'
     )
-    parser.add_argument(        '--reconstruct_start_layer', type=int, default=0,
-        help='Start layer for reconstruction.'
-    )
-    parser.add_argument(        '--reconstruct_end_layer', type=int, default=15,
-        help='End layer for reconstruction.'
+    parser.add_argument(        '--move-layer-to-cpu-after-quant', action='store_true', default=False,
+        help='Whether to move quant layers to CPU after quantization.'
     )
 
     args = parser.parse_args()
@@ -118,7 +101,8 @@ if __name__ == '__main__':
     # ori_ppl = cmoe_ppl_eval(model, testloader, args.dataset, args)
     # print(f"Original model ppl on {args.dataset}: {ori_ppl}")
 
-    carved_model = cmoe_sequential(model, tokenizer, dataloader, args)
+    with torch.no_grad():
+        carved_model = cmoe_sequential(model, tokenizer, dataloader, args)
     save_carved_model = False
     if save_carved_model:
         carved_save_dir = f"model/carved_{model.config.model_type}_e{args.nexperts}a{args.nactivated}_{args.quant_scheme}"
@@ -129,29 +113,6 @@ if __name__ == '__main__':
     # print(carved_model)
 
     tick1 = time.time()
-
-    sft_flag = args.epoch > 0
-    if sft_flag:
-        print('Starting SFT...')    
-
-        carved_model.cuda()
-        carved_model = simple_sft(carved_model, tokenizer, args, epoch = args.epoch)
-
-        carved_model.eval()
-
-        print('SFT_ppl:')
-        ppl = []
-        datasets = ['wikitext2', 'c4-new']
-        for dataset in datasets:
-            dataloader, testloader = get_loaders(
-                dataset, seed=args.seed, tokenizer=tokenizer, seqlen=carved_model.seqlen, bsz = args.carve_bsz
-            )
-            print(dataset)
-            eval_set = dataset
-            ppl_i = cmoe_ppl_eval(carved_model, testloader, eval_set, args)
-            ppl.append(f"{dataset}: {ppl_i}")
-        
-        print("SFT_ppl: ", ppl)
 
     rt = time.time() - tick1
     print(f"Runtime of training-free construction (ppl): {tick1 - tick:.2f}")

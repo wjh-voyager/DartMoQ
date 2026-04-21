@@ -5,8 +5,8 @@ import time
 from tqdm import tqdm
 from dartmoq_utils import *
 from data_utils import *
-from sft_utils import simple_sft
 from eval_dartmoq import cmoe_ppl_eval
+from tool_utils import *
 
 DEV = torch.device('cuda:0')
 
@@ -34,7 +34,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_ac
     tick0 = time.time()
 
     if args.rank_mode == "quant_outlier":
-        all_rates = analyze_quant_outlier(layer, layer_idx, inps, n_experts // slice_expert_num, if_dense=False, save_path=None)
+        all_rates = analyze_quant_outlier(layer, layer_idx, inps, ori_expert_num, if_dense=False, save_path=None)
 
     all_new_expert_rates = []
     for expert_idx, expert in enumerate(layer.mlp.experts):
@@ -75,23 +75,28 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_ac
             with torch.no_grad():
                 group_indices_tensor = torch.tensor(group_indices, dtype=torch.long, device=ori_gate_proj_weights.device)
                 
-                expert_mlp.gate_proj.weight.data = ori_gate_proj_weights[group_indices_tensor, :]
-                expert_mlp.up_proj.weight.data = ori_up_proj_weights[group_indices_tensor, :]
-                expert_mlp.down_proj.weight.data = ori_down_proj_weights[:, group_indices_tensor] * scaling_factor
+                expert_mlp.gate_proj.weight.data = ori_gate_proj_weights[group_indices_tensor, :].detach().clone()
+                expert_mlp.up_proj.weight.data = ori_up_proj_weights[group_indices_tensor, :].detach().clone()
+                expert_mlp.down_proj.weight.data = ori_down_proj_weights[:, group_indices_tensor].detach().clone() * scaling_factor
                 
             all_new_experts.append(expert_mlp)
             new_expert_intermediate_size = expert_mlp.up_proj.weight.shape[0]
             total_neurons_processed += new_expert_intermediate_size
             # print(expert_idx, ii, new_expert_intermediate_size, expert_mlp.gate_proj.weight.shape, expert_mlp.up_proj.weight.shape, expert_mlp.down_proj.weight.shape)
         
-        expanded_gate = ori_router_gate.data[expert_idx, :].unsqueeze(0).repeat(slice_expert_num, 1).to(device)
+        expanded_gate = ori_router_gate.data[expert_idx, :].unsqueeze(0).repeat(slice_expert_num, 1).to(device).detach().clone()
 
         # print(f"gate_start_idx, slice_expert_num, expanded_gate.shape: {expert_idx, gate_start_idx, slice_expert_num, expanded_gate.shape}")
         new_router.weight.data[gate_start_idx: gate_start_idx + slice_expert_num, :] = expanded_gate
         gate_start_idx += slice_expert_num
 
+        del group_indices_tensor, ori_gate_proj_weights, ori_up_proj_weights, ori_down_proj_weights, expanded_gate
+        gc.collect()
+        torch.cuda.empty_cache()
+
     tick1 = time.time()
     print(f"Layer {layer_idx}, {args.rank_mode} expert re- sort time: {tick1 - tick0}")
+    print("all_new_expert_rates:", len(all_new_expert_rates))
 
     moe = layer.mlp.__class__(model.config).to(device)
     moe.num_experts = len(all_new_experts)
@@ -101,7 +106,9 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_ac
     if hasattr(layer.mlp, 'shared_experts'):
         moe.shared_experts = layer.mlp.shared_experts
 
-    print("all_new_expert_rates:", len(all_new_expert_rates))
+    del all_rates
+    gc.collect()
+    torch.cuda.empty_cache()
     return moe, all_new_expert_rates
 
 @torch.no_grad()
@@ -124,29 +131,33 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
         position_ids = position_ids.to(device)
     
     residual = inp
-    hidden_states_inorm = layer.input_layernorm(inp)
+    with torch.no_grad():
+        hidden_states_inorm = layer.input_layernorm(inp)
 
     tick0 = time.time()
     attn_out = torch.zeros_like(hidden_states_inorm)
     for b_i in range(0, batchsize):
         # print(modeltype)
         if modeltype == 'olmoe' or modeltype == 'llama' or modeltype == 'qwen3' or modeltype == 'qwen3_moe' or modeltype == 'deepseek_v3':
-            attn_out[b_i:b_i+1] = layer.self_attn(
-                hidden_states=hidden_states_inorm[b_i:b_i+1],
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                position_embeddings=position_embeddings)[0]
+            with torch.no_grad():
+                attn_out[b_i:b_i+1] = layer.self_attn(
+                    hidden_states=hidden_states_inorm[b_i:b_i+1],
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    position_embeddings=position_embeddings)[0]
         else:
-            attn_out[b_i:b_i+1] = layer.self_attn(
-                hidden_states=hidden_states_inorm[b_i:b_i+1],
-                attention_mask=attention_mask, 
-                position_ids=position_ids)[0]
+            with torch.no_grad():
+                attn_out[b_i:b_i+1] = layer.self_attn(
+                    hidden_states=hidden_states_inorm[b_i:b_i+1],
+                    attention_mask=attention_mask, 
+                    position_ids=position_ids)[0]
     tick1 = time.time()
     print(f"Inference in origin attention layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}")
 
     hidden_states = residual + attn_out
     residual = hidden_states
-    hidden_states = layer.post_attention_layernorm(hidden_states)
+    with torch.no_grad():
+        hidden_states = layer.post_attention_layernorm(hidden_states)
 
     # print(hidden_states.shape)
     is_moe_layer = hasattr(layer.mlp, 'gate') or hasattr(layer.mlp, 'experts') ## some moe model has no expert layer in the first few layers,
@@ -160,7 +171,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
         # moe = reconstruct_moe_from_dense(model, layer, layer_idx, hidden_states, n_experts, n_activated, slice_expert_num, device, args)
         # layer.mlp = moe
         assert False, "Dense model is not supported"
-    
+
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -209,7 +220,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
                 assert False, f"Quant scheme {qscheme_str} is not valid."
     
     if_quant_attn = True
-    quant_layer_mix_precision(layer, layer_idx, if_quant_attn, slice_expert_num, 
+    quant_layer_mix_precision(layer, layer_idx, if_quant_attn, n_experts, slice_expert_num,
                 hidden_states_inorm, hidden_states, attention_mask, position_ids, position_embeddings, 
                 qscheme)
     gc.collect()
@@ -220,16 +231,26 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
     moe_out = torch.zeros_like(hidden_states)
     for b_i in range(0, batchsize):
         if modeltype == 'olmoe' or modeltype == 'qwen3_moe' or modeltype == 'qwen3':
-            moe_out[b_i:b_i+1], _ = layer.mlp(hidden_states[b_i:b_i+1])
+            with torch.no_grad():
+                moe_out[b_i:b_i+1], _ = layer.mlp(hidden_states[b_i:b_i+1])
         else:
-            moe_out[b_i:b_i+1] = layer.mlp(hidden_states[b_i:b_i+1])
+            with torch.no_grad():
+                moe_out[b_i:b_i+1] = layer.mlp(hidden_states[b_i:b_i+1])
     tick1 = time.time()
     print(f"Inference in new moe layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}")
 
-    moe_out = moe_out + residual
+    with torch.no_grad():
+        moe_out = moe_out + residual
+
+    del hidden_states, hidden_states_inorm, residual, attn_out, all_new_expert_rates
+
+    gc.collect()
+    torch.cuda.empty_cache()
+
     # print("moe_out")
     return moe_out
 
+@torch.no_grad()
 def cmoe_sequential(model, tokenizer, dataloader, args):
     print('Starting ...')
 
@@ -315,6 +336,8 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
     
     inps = inps.squeeze(1)
 
+    layer_rank_list = []
+
     for layer_idx, layer in tqdm(enumerate(layers), desc = 'Carving MoE layers...'):
         moe_out = construct_moe(model,
             moe_model_flag,
@@ -333,9 +356,26 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
         )
 
         inps = moe_out
-        gc.collect()
-        torch.cuda.empty_cache()
-        
+
+        if args.move_layer_to_cpu_after_quant:
+            layer_rank_list.append(next(layer.parameters()).device)
+            print(f"Layer {layer_idx}", layer_rank_list[-1])
+            layer = layer.to('cpu')
+
+        for i in range(torch.cuda.device_count()):
+            force_release_inactive_splits(device=i) # force to release inactive reserved memory
+            # print(f"CUDA {i} Allocated: {torch.cuda.memory_allocated(device=i) / 1024**3:.2f} GB")
+            # print(f"CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
+
+    print("MoE carving done. Moving layers to GPU for evaluation...")
+
+    if args.move_layer_to_cpu_after_quant:
+        for layer_idx, layer in enumerate(model.model.layers):
+            layer = layer.to(layer_rank_list[layer_idx])
+            # for i in range(torch.cuda.device_count()):
+            #     print(f"layer {layer_idx} CUDA {i} Allocated: {torch.cuda.memory_allocated(device=i) / 1024**3:.2f} GB")
+            #     print(f"layer {layer_idx} CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
+
     # print('Training_free_ppl:')
     pre_ppl = []
     datasets = ['wikitext2', 'c4-new']
