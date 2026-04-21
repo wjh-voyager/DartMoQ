@@ -22,7 +22,7 @@ def cmoe_ppl_eval(model, testloader, eval_set, args):
     testenc = testloader.input_ids
     # print("testenc.shape: ", testenc.shape)
     nsamples = testenc.shape[1] // model.seqlen
-    nsamples = 64
+    # nsamples = 64
     print('ppl evaluation samples:', nsamples)
 
     def get_activation():
@@ -181,25 +181,26 @@ def get_qwen3_moe(model_path):
 def get_qwen3_30b_a3b(model_path):
     from transformers import Qwen3MoeForCausalLM
 
+    # device_map = {
+    #             "model.embed_tokens": "cuda:0",
+    #             "model.rotary_emb": "cuda:0",
+    #             **{
+    #                 f"model.layers.{k}": 0 for k in range(0, 16)
+    #             },
+    #             **{
+    #                 f"model.layers.{k}": 1 for k in range(16, 32)
+    #             },
+    #             **{
+    #                 f"model.layers.{k}": "cpu" for k in range(32, 48)
+    #             },
+    #             "model.norm": "cpu",
+    #             "lm_head": "cpu",
+    #         }
     model = Qwen3MoeForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
-        device_map = {
-                "model.embed_tokens": "cuda:0",
-                "model.rotary_emb": "cuda:0",
-                **{
-                    f"model.layers.{k}": 0 for k in range(0, 16)
-                },
-                **{
-                    f"model.layers.{k}": 1 for k in range(16, 32)
-                },
-                **{
-                    f"model.layers.{k}": "cpu" for k in range(32, 48)
-                },
-                "model.norm": "cpu",
-                "lm_head": "cpu",
-            },
+        device_map = "auto",
         trust_remote_code=True
     )
 
@@ -313,9 +314,6 @@ if __name__ == '__main__':
     parser.add_argument(        'model', type=str,
         help='Model to load; pass location of hugginface converted checkpoint.'
     )
-    parser.add_argument(        '--nsamples', type=int, default=128,
-        help='Number of Fine-tuning data for CMoE.'
-    )
     parser.add_argument(        '--seed',
         type=int, default=0, help='Seed for sampling the calibration data.'
     )
@@ -339,7 +337,7 @@ if __name__ == '__main__':
         # datasets = ['wikitext2', ]
         for dataset in datasets:
             dataloader, testloader = get_loaders(
-                dataset, seed=args.seed, tokenizer=tokenizer, seqlen=model.seqlen, bsz = 1
+                dataset, seed=args.seed, tokenizer=tokenizer, seqlen=model.seqlen
             )
             print(dataset)
             eval_set = dataset

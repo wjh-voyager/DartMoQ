@@ -259,7 +259,7 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
     layers = model.model.layers
 
     dtype = next(iter(model.parameters())).dtype
-    bsz = args.carve_bsz
+    bsz = 1
     
     inps = torch.zeros(
         (args.nsamples//bsz, bsz, model.seqlen, model.config.hidden_size), dtype=dtype, device='cpu'
@@ -381,7 +381,7 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
     datasets = ['wikitext2', 'c4-new']
     for dataset in datasets:
         dataloader, testloader = get_loaders(
-            dataset, seed=args.seed, tokenizer=tokenizer, seqlen=model.seqlen, bsz = args.carve_bsz
+            dataset, seed=args.seed, tokenizer=tokenizer, seqlen=model.seqlen
         )
         print(dataset)
         eval_set = dataset

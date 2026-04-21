@@ -56,9 +56,6 @@ if __name__ == '__main__':
     parser.add_argument(        '--nshared', type=int, default=2,
         help='Number of shared experts.'
     )
-    parser.add_argument(        '--carve-bsz', type=int, default=1,
-        help='Carve batch size for CMoE.'
-    )
     parser.add_argument(        '--eval-zero', action='store_true',
         help='Whether to run downstream tasks evaluation.'
     )
@@ -84,13 +81,12 @@ if __name__ == '__main__':
     print("quant-scheme/rank-mode: (ppl)", args.quant_scheme, args.rank_mode)
     model, tokenizer = load_model(args.model)
 
-    dataloader, testloader = get_loaders(
+    dataloader, _ = get_loaders(
         args.dataset, 
         nsamples=args.nsamples, 
         seed=args.seed, 
         tokenizer=tokenizer, 
-        seqlen=model.seqlen, 
-        bsz = args.carve_bsz
+        seqlen=model.seqlen
     )
 
     print("number of data: ", args.nsamples)
@@ -98,8 +94,6 @@ if __name__ == '__main__':
     print("cali_data: ", args.dataset)
 
     tick = time.time()
-    # ori_ppl = cmoe_ppl_eval(model, testloader, args.dataset, args)
-    # print(f"Original model ppl on {args.dataset}: {ori_ppl}")
 
     with torch.no_grad():
         carved_model = cmoe_sequential(model, tokenizer, dataloader, args)

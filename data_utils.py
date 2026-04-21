@@ -14,7 +14,7 @@ def set_seed(seed):
     torch.random.manual_seed(seed)
 
 
-def get_wikitext2(nsamples, seed, seqlen, tokenizer, bsz = 8):
+def get_wikitext2(nsamples, seed, seqlen, tokenizer, bsz = 1):
     traindata = load_dataset('wikitext', 'wikitext-2-raw-v1', split='train')
     testdata = load_dataset('wikitext', 'wikitext-2-raw-v1', split='test')
 
@@ -65,7 +65,7 @@ def get_ptb(nsamples, seed, seqlen, tokenizer):
         trainloader.append((inp, tar))
     return trainloader, testenc
 
-def get_c4(nsamples, seed, seqlen, tokenizer, bsz = 8):
+def get_c4(nsamples, seed, seqlen, tokenizer, bsz = 1):
 
     traindata = load_dataset(
         'allenai/c4', data_files={'train': 'en/c4-train.00000-of-01024.json.gz'}, split='train'
@@ -107,7 +107,7 @@ def get_c4(nsamples, seed, seqlen, tokenizer, bsz = 8):
     import random
     random.seed(0)
     valenc = []
-    for _ in range(256):
+    for _ in range(nsamples):
         while True:
             i = random.randint(0, len(valdata) - 1)
             tmp = tokenizer(valdata[i]['text'], return_tensors='pt')
@@ -183,7 +183,7 @@ def get_c4_new(nsamples, seed, seqlen, tokenizer):
     return trainloader, valenc
 
 
-def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None, bsz = 8):
+def get_loaders(name, nsamples=256, seed=0, seqlen=2048, tokenizer=None, bsz = 1):
     if 'wikitext2' in name:
         return get_wikitext2(nsamples, seed, seqlen, tokenizer, bsz = bsz)
     if 'ptb' in name:
