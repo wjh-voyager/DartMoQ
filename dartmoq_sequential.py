@@ -13,7 +13,7 @@ DEV = torch.device('cuda:0')
 @torch.no_grad()
 def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_activated, slice_expert_num, ori_activated, device, args):
 
-    expert_activation_rates = analyze_experts_activation(layer, layer_idx, inps, ori_activated) #, save_path="plot/{layer_idx}_experts_activation.png")
+    expert_activation_rates = analyze_experts_activation(layer, layer_idx, inps, ori_activated, model.config.model_type) #, save_path="plot/{layer_idx}_experts_activation.png")
 
     ori_expert_num = len(layer.mlp.experts)
     new_expert_num = ori_expert_num * slice_expert_num 
@@ -364,9 +364,10 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
 
         for i in range(torch.cuda.device_count()):
             force_release_inactive_splits(device=i) # force to release inactive reserved memory
-            # print(f"CUDA {i} Allocated: {torch.cuda.memory_allocated(device=i) / 1024**3:.2f} GB")
-            # print(f"CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
-
+            print(f"CUDA {i} Allocated: {torch.cuda.memory_allocated(device=i) / 1024**3:.2f} GB")
+            print(f"CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
+        print(flush=True)
+        
     print("MoE carving done. Moving layers to GPU for evaluation...")
 
     if args.move_layer_to_cpu_after_quant:

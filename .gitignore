@@ -6,6 +6,7 @@ model/
 logs/
 
 run.*.sh
+*.out
 # run.sh
 *.json
 *.csv

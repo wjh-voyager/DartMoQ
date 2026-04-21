@@ -20,14 +20,24 @@ QBATCH = 256
 DEV = torch.device('cuda:0')
 
 @torch.no_grad()
-def analyze_experts_activation(layer, layer_idx, inps, K, save_path=None):
+def analyze_experts_activation(layer, layer_idx, inps, K, modeltype, save_path=None):
 
     batch_size, seq_len, emb_size = inps.shape
     total_samples = batch_size * seq_len
 
     activation_markers = torch.zeros(layer.mlp.gate.weight.shape[0]).to(inps.device)
-    with torch.no_grad():
-        top_indices, top_values, _ = layer.mlp.gate(inps)
+    if modeltype == 'olmoe' or modeltype == 'qwen3_moe' or modeltype == 'qwen3':
+        with torch.no_grad():
+            hidden_states = inps.view(-1, emb_size)
+            router_logits = layer.mlp.gate(hidden_states)
+            router_logits = F.softmax(router_logits, dim=-1)
+            _, top_indices = torch.topk(router_logits, K, dim=-1)
+            # print(top_indices.shape)
+            del router_logits, hidden_states
+    else:
+        with torch.no_grad():
+            top_indices, top_values, _ = layer.mlp.gate(inps)
+            print(top_indices.shape)
 
     for i in range(total_samples):
         activation_markers[top_indices[i]] += 1.0

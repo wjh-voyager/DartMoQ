@@ -77,7 +77,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     print("-" * 50)
-    print("Loading model: ", args.model)
+    print("Loading model: (ppl)", args.model)
     print("quant-scheme/rank-mode: (ppl)", args.quant_scheme, args.rank_mode)
     model, tokenizer = load_model(args.model)
 
