@@ -191,8 +191,7 @@ def analyze_neuron_activations(act_fn, inps, gate_proj_weights, up_proj_weights,
 @torch.no_grad()
 def construct_experts_by_rates(
     origin_rates,
-    num_experts,
-    num_shared_experts):
+    num_experts):
 
     # print("origin_rates:", origin_rates.shape)
     hidden_size = origin_rates.shape[0]
@@ -207,13 +206,14 @@ def construct_experts_by_rates(
     expert_rates.append(0.0)
 
     top_values, top_indices = torch.topk(rates, hidden_size)
-    for i in range(num_experts):        
+    for i in range(num_experts):
         expert_indices = top_indices[i*neurons_per_expert:(i+1)*neurons_per_expert].tolist()
         rates = top_values[i*neurons_per_expert:(i+1)*neurons_per_expert].sum().item()
         expert_groups.append(expert_indices)
         expert_rates.append(rates)
-    
-    expert_rates = [e / sum(expert_rates) for e in expert_rates]
+
+    # Normalize expert rates, 1e-8 to avoid division by zero as GPTQ loss can be zero
+    expert_rates = [e / sum(expert_rates + 1e-8) for e in expert_rates]
     return expert_groups, expert_rates
 
 @torch.no_grad()

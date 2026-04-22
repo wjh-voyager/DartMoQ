@@ -57,13 +57,10 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_ac
         
         expert_groups, expert_rates = construct_experts_by_rates(
             rates,
-            num_experts = slice_expert_num,
-            num_shared_experts = 0,
+            num_experts = slice_expert_num
         )
         
-        lowrank_sparsity = 0
         expert_groups = expert_groups[1:]
-        # print(expert_rates)
         _rates = [e * expert_activation_rates[expert_idx] for e in expert_rates[1:]]
         all_new_expert_rates.extend(_rates)
 
@@ -328,7 +325,7 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
         elif hasattr(model.config, 'intermediate_size'): ## olmoe，
             model.config.intermediate_size = model.config.intermediate_size // slice_expert_num
         print("The model is already a MoE model. Proceeding to split experts. ")
-        print(f"Slice expert by : {slice_expert_num} to {args.nexperts}, with {args.nactivated} activated experts.")
+        print(f"Slice expert by {slice_expert_num}: to {args.nexperts}, with {args.nactivated} activated experts.")
     else:
         print("The model is a dense model. Proceeding to carve MoE layers. ")
         slice_expert_num = args.nexperts
