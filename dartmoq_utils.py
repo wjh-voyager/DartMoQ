@@ -213,7 +213,7 @@ def construct_experts_by_rates(
         expert_rates.append(rates)
 
     # Normalize expert rates, 1e-8 to avoid division by zero as GPTQ loss can be zero
-    expert_rates = [e / sum(expert_rates + 1e-8) for e in expert_rates]
+    expert_rates = [e / (sum(expert_rates) + 1e-8) for e in expert_rates]
     return expert_groups, expert_rates
 
 @torch.no_grad()
