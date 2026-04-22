@@ -178,7 +178,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
     if args.quant_scheme == "global":
         qscheme = {}
         qscheme['attn'] = [8]
-        qscheme['share'] = [4]
+        qscheme['share'] = [8]
         qscheme['expert'] = []
         
         # print(all_new_expert_rates)
@@ -236,8 +236,6 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
         else:
             with torch.no_grad():
                 moe_out[b_i:b_i+1] = layer.mlp(hidden_states[b_i:b_i+1])
-    tick1 = time.time()
-    print(f"Inference in new moe layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}")
 
     with torch.no_grad():
         moe_out = moe_out + residual
@@ -247,7 +245,8 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp, attention_mask, 
     gc.collect()
     torch.cuda.empty_cache()
 
-    # print("moe_out")
+    tick1 = time.time()
+    print(f"Inference in new moe layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}", flush=True)
     return moe_out
 
 @torch.no_grad()
@@ -363,7 +362,7 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
             layer = layer.to('cpu')
 
         for i in range(torch.cuda.device_count()):
-            force_release_inactive_splits(device=i) # force to release inactive reserved memory
+            # force_release_inactive_splits(device=i) # force to release inactive reserved memory
             print(f"CUDA {i} Allocated: {torch.cuda.memory_allocated(device=i) / 1024**3:.2f} GB")
             print(f"CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
         print(flush=True)
