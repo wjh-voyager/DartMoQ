@@ -13,7 +13,7 @@ DEV = torch.device('cuda:0')
 @torch.no_grad()
 def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_activated, slice_expert_num, ori_activated, device, args):
 
-    if args.quant_scheme == "global":
+    if "global" in args.quant_scheme :
         expert_activation_rates = analyze_experts_activation(layer, layer_idx, inps, ori_activated, model.config.model_type) #, save_path="plot/{layer_idx}_experts_activation.png")
 
     ori_expert_num = len(layer.mlp.experts)
@@ -62,7 +62,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps, n_experts, n_ac
         )
         
         expert_groups = expert_groups[1:]
-        if args.quant_scheme == "global":
+        if "global" in args.quant_scheme :
             _rates = [e * expert_activation_rates[expert_idx] for e in expert_rates[1:]]
             all_new_expert_rates.extend(_rates)
         else:
@@ -137,7 +137,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
     with torch.no_grad():
         hidden_states_inorm = layer.input_layernorm(inp)
 
-    tick0 = time.time()
+    # tick0 = time.time()
     attn_out = torch.zeros_like(hidden_states_inorm)
     for b_i in range(0, batchsize):
         # print(modeltype)
@@ -154,8 +154,8 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
                     hidden_states=hidden_states_inorm[b_i:b_i+1],
                     attention_mask=attention_mask, 
                     position_ids=position_ids)[0]
-    tick1 = time.time()
-    print(f"Inference in origin attention layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}")
+    # tick1 = time.time()
+    # print(f"Inference in origin attention layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}")
 
     hidden_states = residual + attn_out
     residual = hidden_states
@@ -165,6 +165,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
     # print(hidden_states.shape)
     is_moe_layer = hasattr(layer.mlp, 'gate') or hasattr(layer.mlp, 'experts') ## some moe model has no expert layer in the first few layers,
     
+    tick0 = time.time()
     all_new_expert_rates = None
     if moe_model_flag:
         if is_moe_layer:
@@ -174,15 +175,35 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
         # moe = reconstruct_moe_from_dense(model, layer, layer_idx, hidden_states, n_experts, n_activated, slice_expert_num, device, args)
         # layer.mlp = moe
         assert False, "Dense model is not supported"
-
     gc.collect()
     torch.cuda.empty_cache()
+    tick1 = time.time()
+    print(f"reconstruct_moe_from_existing layer {layer_idx} time: {tick1 - tick0}")
 
-    if args.quant_scheme == "global":
+    if "global" in args.quant_scheme:
         qscheme = {}
         qscheme['attn'] = [8]
         qscheme['share'] = [8]
         qscheme['expert'] = []
+        e_high = 3
+        e_mid = 2
+        e_low = 1
+        try:
+            qscheme_str = args.quant_scheme
+            # sample: "a8s4m321", "a8s4m332"
+            match = re.search(r'global-a(\d)s(\d)m(\d)(\d)(\d)', qscheme_str)
+            aa = int(match.group(1))
+            ss = int(match.group(2))
+            e0 = int(match.group(3))
+            e1 = int(match.group(4))
+            e2 = int(match.group(5))
+            qscheme['attn'] = [aa]
+            qscheme['share'] = [ss]
+            e_high = e0
+            e_mid = e1
+            e_low = e2
+        except Exception as e:
+            print(f"Quant scheme {qscheme_str} is not valid: {e}")
         
         # print(all_new_expert_rates)
         if all_new_expert_rates is not None:
@@ -194,11 +215,11 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
             qscheme['expert'] = [[0] * slice_expert_num for i in range(n_experts // slice_expert_num)]
             for i, idx in enumerate(sorted_index):
                 if i < low_:
-                    bit = 1
-                elif i >= high_:
-                    bit = 3
+                    bit = e_low
+                elif i >= n_experts - high_:
+                    bit = e_high
                 else:
-                    bit = 2
+                    bit = e_mid
                 # print(idx, all_new_expert_rates[idx])
                 xi = int(idx // slice_expert_num)
                 xj = int(idx % slice_expert_num)
@@ -226,15 +247,17 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
             except:
                 assert False, f"Quant scheme {qscheme_str} is not valid."
     
+    tick0 = time.time()
     if_quant_attn = True
     quant_layer_mix_precision(layer, layer_idx, if_quant_attn, n_experts, slice_expert_num,
                 hidden_states_inorm, hidden_states, attention_mask, position_ids, position_embeddings, 
                 qscheme)
     gc.collect()
     torch.cuda.empty_cache()
-    
-    print(hidden_states.shape)
-    tick0 = time.time()
+    tick1 = time.time()
+    print(f"quant_layer_mix_precision layer {layer_idx} time: {tick1 - tick0}")
+
+    # tick0 = time.time()
     moe_out = torch.zeros_like(hidden_states)
     for b_i in range(0, batchsize):
         if modeltype == 'olmoe' or modeltype == 'qwen3_moe' or modeltype == 'qwen3':
@@ -252,8 +275,8 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
     gc.collect()
     torch.cuda.empty_cache()
 
-    tick1 = time.time()
-    print(f"Inference in new moe layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}", flush=True)
+    # tick1 = time.time()
+    # print(f"Inference in new moe layer {layer_idx} with batch size {batchsize} time: {tick1 - tick0}", flush=True)
     return moe_out
 
 @torch.no_grad()
@@ -391,7 +414,7 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
             print(f"CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
 
         tick1 = time.time()
-        print(f"Layer {layer_idx} time: {tick1 - tick0:.2f} s")
+        print(f"Layer {layer_idx} total quantization time: {tick1 - tick0:.2f} s")
         print(flush=True)
     
     print("MoE carving done. Moving layers to GPU for evaluation...")

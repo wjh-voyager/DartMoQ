@@ -10,6 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 @torch.no_grad()
 def cmoe_ppl_eval(model, testloader, eval_set, args):
+    tick0 = time.time()
     use_cache = model.config.use_cache
     model.config.use_cache = False
     
@@ -72,7 +73,8 @@ def cmoe_ppl_eval(model, testloader, eval_set, args):
     
     # print(nlls)
     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
-    print(f'ppl on {eval_set}: {ppl.item():.4f}')
+    tick1 = time.time()
+    print(f'ppl on {eval_set}: {ppl.item():.4f}, time: {tick1 - tick0:.2f}')
     model.config.use_cache = use_cache
 
     return ppl.item()
@@ -88,6 +90,7 @@ def eval_zero_shot(model, task_list = ["arc_challenge", "arc_easy", "piqa", "boo
     )
 
     for task in task_list:
+        tick0 = time.time()
         results = evaluator.simple_evaluate(
             model=model,
             tasks=[task],
@@ -95,7 +98,9 @@ def eval_zero_shot(model, task_list = ["arc_challenge", "arc_easy", "piqa", "boo
             batch_size="auto",
             device="cuda"
         )
-        print(task, results["results"][task]) 
+        tick1 = time.time()
+
+        print(task, results["results"][task], f"time: {tick1 - tick0}s") 
     
     tick1 = time.time()
     print(f"Zero-shot evaluation time: {tick1 - tick0}")
@@ -372,7 +377,6 @@ if __name__ == '__main__':
             eval_set = dataset
             ppl_i = cmoe_ppl_eval(model, testloader, eval_set, args)
             ppl.append(f"{dataset}: {ppl_i}")
-            # print("PPL on {}: {:.4f}".format(dataset, ppl_i))
 
     if args.eval_zero:
 

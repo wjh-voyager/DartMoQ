@@ -22,6 +22,7 @@ DEV = torch.device('cuda:0')
 @torch.no_grad()
 def analyze_experts_activation(layer, layer_idx, inps, K, modeltype, save_path=None):
 
+    tick0 = time.time()
     batch_size, seq_len, emb_size = inps.shape
     total_samples = batch_size * seq_len
 
@@ -76,6 +77,8 @@ def analyze_experts_activation(layer, layer_idx, inps, K, modeltype, save_path=N
         plt.savefig(save_path)
         plt.close()
 
+    tick1 = time.time()
+    print(f"analyze_experts_activation time for layer {layer_idx} is: {tick1 - tick0:.2f}")
     return activation_rates
 
 @torch.no_grad()
