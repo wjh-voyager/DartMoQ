@@ -483,7 +483,11 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
             del handles
 
             for name in qmodule.keys():
-                loss[name] = gptq[name].fasterquant(name=f"layer_idx.{layer_idx}."+name, groupsize=groupsize, actorder=act_order, static_groups=static_groups)
+                if gptq[name].quantizer.bits == 0:
+                    gptq[name].layer.weight = nn.Parameter(torch.zeros_like(gptq[name].layer.weight))
+                    loss[name] = torch.zeros(1)
+                else:
+                    loss[name] = gptq[name].fasterquant(name=f"layer_idx.{layer_idx}."+name, groupsize=groupsize, actorder=act_order, static_groups=static_groups)
                 gptq[name].free()
                 del gptq[name]
             
