@@ -9,4 +9,4 @@ run.*.sh
 *.out
 # run.sh
 *.json
-*.csv.codex/
+*.csv
