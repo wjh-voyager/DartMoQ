@@ -1,9 +1,8 @@
 
 import torch
 import torch.nn as nn
-import copy
+import os
 import time
-from tqdm import tqdm
 from dartmoq_utils import *
 from data_utils import *
 from eval_dartmoq import cmoe_ppl_eval
@@ -47,8 +46,25 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         else:
             outlier_bits = {2, 3, 4}
         print(f"simulate quant outlier_bits {outlier_bits}")
+
+        cache_dir = f"quant_outlier_/{model.model_id}"
+        os.makedirs(cache_dir, exist_ok=True)
+        
         for x in outlier_bits:
+            cache_path = os.path.join(cache_dir, f"{model.model_id}_L{layer_idx}_b{x}.pt")
+            if os.path.exists(cache_path):
+                try:
+                    cached_data = torch.load(cache_path, map_location=device)
+                    print(f"Loading cached quant outlier data for layer {layer_idx}, wbits={x}")
+                    all_rates[x] = cached_data
+                    continue
+                except Exception as e:
+                    print(f"Failed to load cached data: {e}")
+            
+            print(f"Computing quant outlier for layer {layer_idx}, wbits={x}")
             all_rates[x] = analyze_quant_outlier(layer, layer_idx, inps, ori_expert_num, wbits=x, save_path=None)
+            torch.save(all_rates[x], cache_path)
+            print(f"Saved quant outlier data to {cache_path}")
 
         # from visual_utils import plot_diff_wbits_correlation, plot_spearman_rank_correlation
         # # plot_diff_wbits_correlation(model.config.model_type, layer_idx, ori_expert_num, all_rates[2], all_rates[3], all_rates[4])

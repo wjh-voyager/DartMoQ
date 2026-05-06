@@ -78,7 +78,7 @@ if __name__ == '__main__':
     )
 
     print("number of data: ", args.nsamples)
-    print("model: ", args.model)
+    print("model: ", args.model, model.model_id)
     print("cali_data: ", args.dataset)
 
     tick = time.time()
