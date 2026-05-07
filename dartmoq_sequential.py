@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import os
@@ -7,7 +6,7 @@ from dartmoq_utils import *
 from data_utils import *
 from eval_dartmoq import cmoe_ppl_eval
 from camera_utils import analyze_expert_energy
-from dp_utils import enum_optimal_m_scheme_fast
+from dp_utils import enum_optimal_m_scheme_fast_general
 from tool_utils import *
 
 DEV = torch.device('cuda:0')
@@ -44,7 +43,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         if 'target_bpw' not in qscheme:
             outlier_bits = {2}
         else:
-            outlier_bits = {2, 3, 4}
+            outlier_bits = {1, 2, 3, 4}
         print(f"simulate quant outlier_bits {outlier_bits}")
 
         cache_dir = f"quant_outlier_/{model.model_id}"
@@ -95,7 +94,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 for x in outlier_bits:
                     rates_x[x] = all_rates[x][expert_idx].detach().cpu().numpy()
                 # print(f"expert_idx {expert_idx} scheme search:")
-                dpscheme, rates = enum_optimal_m_scheme_fast(rates_x, slice_expert_num, target_bpw=qscheme['target_bpw'])
+                dpscheme, rates = enum_optimal_m_scheme_fast_general(rates_x, slice_expert_num, target_bpw=qscheme['target_bpw'])
                 dpscheme_list.append(dpscheme)
                 rates = torch.from_numpy(rates).to(device)
         elif args.rank_mode == "random":
@@ -159,7 +158,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     gc.collect()
     torch.cuda.empty_cache()
 
-    print(qscheme)
+    # print(qscheme)
     if 'target_bpw' in qscheme:
         qscheme['expert'] = dpscheme_list
         try:
