@@ -7,6 +7,7 @@ from data_utils import *
 from eval_dartmoq import cmoe_ppl_eval
 from camera_utils import analyze_expert_energy
 from dp_utils import enum_optimal_m_scheme_fast_general
+from dp_utils import extrapolate_0bit_loss
 from tool_utils import *
 
 DEV = torch.device('cuda:0')
@@ -35,7 +36,6 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     total_neurons_processed = 0
     gate_start_idx = 0
 
-
     if args.rank_mode == "quant_outlier":
         tick0 = time.time()
 
@@ -43,25 +43,30 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         if 'target_bpw' not in qscheme:
             outlier_bits = {2}
         else:
-            outlier_bits = {1, 2, 3, 4}
+            outlier_bits = {0, 1, 2, 3, 4}
         print(f"simulate quant outlier_bits {outlier_bits}")
 
         cache_dir = f"quant_outlier_/{model.model_id}"
         os.makedirs(cache_dir, exist_ok=True)
         
-        for x in outlier_bits:
+        for x in sorted(outlier_bits, reverse=True):  ## 0 bit should be extrapolated from other bit data, so we compute it at last
             cache_path = os.path.join(cache_dir, f"{model.model_id}_L{layer_idx}_b{x}.pt")
             if os.path.exists(cache_path):
                 try:
                     cached_data = torch.load(cache_path, map_location=device)
-                    print(f"Loading cached quant outlier data for layer {layer_idx}, wbits={x}")
+                    print(f"Loading cached quant outlier data for layer {layer_idx}, wbits={x}", flush=True)
                     all_rates[x] = cached_data
                     continue
                 except Exception as e:
-                    print(f"Failed to load cached data: {e}")
+                    print(f"Failed to load cached data {e}")
             
-            print(f"Computing quant outlier for layer {layer_idx}, wbits={x}")
-            all_rates[x] = analyze_quant_outlier(layer, layer_idx, inps, ori_expert_num, wbits=x, save_path=None)
+            if x == 0:
+                print(f"Computing extrapolate 0 bit loss for layer {layer_idx}")
+                all_rates[0] = extrapolate_0bit_loss(all_rates)
+                all_rates[0] = [torch.from_numpy(all_rates[0][i]).to(device) for i in range(len(all_rates[0]))]
+            else:
+                print(f"Computing quant outlier for layer {layer_idx}, wbits={x}")
+                all_rates[x] = analyze_quant_outlier(layer, layer_idx, inps, ori_expert_num, wbits=x, save_path=None)
             torch.save(all_rates[x], cache_path)
             print(f"Saved quant outlier data to {cache_path}")
 
@@ -69,7 +74,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         # # plot_diff_wbits_correlation(model.config.model_type, layer_idx, ori_expert_num, all_rates[2], all_rates[3], all_rates[4])
         # plot_spearman_rank_correlation(model.config.model_type, layer_idx, ori_expert_num, all_rates[2], all_rates[3], all_rates[4])
         tick1 = time.time()
-        print(f"analyze quant outlier time {tick1 - tick0}")
+        print(f"analyze quant outlier time {tick1 - tick0}", flush=True)
 
     tick0 = time.time()
 
@@ -144,7 +149,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         torch.cuda.empty_cache()
 
     tick1 = time.time()
-    print(f"Layer {layer_idx}, {args.rank_mode} expert re- sort time: {tick1 - tick0}")
+    print(f"Layer {layer_idx}, {args.rank_mode} expert re- sort time: {tick1 - tick0}", flush=True)
     print("all_new_expert_rates:", len(all_new_expert_rates))
 
     moe = layer.mlp.__class__(model.config).to(device)
@@ -252,7 +257,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
     gc.collect()
     torch.cuda.empty_cache()
     tick1 = time.time()
-    print(f"reconstruct_moe_from_existing layer {layer_idx} time: {tick1 - tick0}")
+    print(f"reconstruct_moe_from_existing layer {layer_idx} time: {tick1 - tick0}", flush=True)
 
     if 'bpw' in args.quant_scheme:
         if is_moe_layer:
@@ -458,8 +463,7 @@ def cmoe_sequential(model, tokenizer, dataloader, args):
             print(f"CUDA {i} Reserved: {torch.cuda.memory_reserved(device=i) / 1024**3:.2f} GB")
 
         tick1 = time.time()
-        print(f"Layer {layer_idx} total quantization time: {tick1 - tick0:.2f} s")
-        print(flush=True)
+        print(f"Layer {layer_idx} total quantization time: {tick1 - tick0:.2f} s", flush=True)
     
     print("MoE carving done. Moving layers to GPU for evaluation...")
 

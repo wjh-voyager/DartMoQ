@@ -1,6 +1,105 @@
+from pyexpat import model
+import os
 import time
 import numpy as np
 from typing import List, Dict, Tuple
+import matplotlib.pyplot as plt
+
+import numpy as np
+from scipy.optimize import curve_fit
+from typing import Dict
+
+def _exp_decay_func(b: np.ndarray, A: float, B: float, C: float) -> np.ndarray:
+    return A * np.exp(B * b) + C
+
+def _poly2_func(b: np.ndarray, A: float, B: float, C: float) -> np.ndarray:
+    return A * (b ** 2) + B * b + C
+
+def _power_growth_func(x: np.ndarray, A: float, C: float, D: float, x_max: float) -> np.ndarray:
+    return A * np.power(x_max - x + 1, C) + D
+
+def extrapolate_0bit_loss(rates: Dict[int, List[np.ndarray]], save_plots: bool = False) -> List[np.ndarray]:
+    bits = sorted(rates.keys())
+    if 0 in bits:
+        bits.remove(0)
+        rates.pop(0)
+    # print(bits)
+    assert len(bits) >= 2, "at least 2 bits are required for extrapolation of 0bit loss"
+    
+    x_max = max(bits) + 1.0
+
+    n_experts = len(rates[bits[0]])
+    for b in bits:
+        assert len(rates[b]) == n_experts, f"bit {b} has inconsistent number of experts"
+    
+    L0 = []
+    
+    for expert_idx in range(n_experts):
+        print(f"Processing extrapolate 0bit loss for expert {expert_idx}")
+
+        expert_rates = {}
+        n_neurons = None
+        for b in bits:
+            expert_rates[b] = rates[b][expert_idx].detach().cpu().numpy()
+            if n_neurons is None:
+                n_neurons = len(expert_rates[b])
+            else:
+                assert len(expert_rates[b]) == n_neurons, \
+                    f"expert {expert_idx}, bit {b} has inconsistent loss array length"
+        
+        b_array = np.array(bits, dtype=float)
+        expert_L0 = np.zeros(n_neurons, dtype=float)
+        
+        for i in range(n_neurons):
+            loss_array = np.array([expert_rates[b][i] for b in bits])
+
+            # --------------------- log quadratic fit ---------------------
+            # function: log(loss) = p*b^2 + q*b + r
+            # loss(b) = exp(p*b^2 + q*b + r)
+            # -------------------------------------------------------------
+            try:
+                log_loss = np.log(loss_array)
+
+                p, q, r = np.polyfit(b_array, log_loss, deg=2)
+
+                l0 = np.exp(r)
+
+                l1 = expert_rates[1][i] if 1 in expert_rates else expert_rates[bits[0]][i]
+                if l0 < l1:
+                    l0 = l1 * 2.0
+
+            except (RuntimeError, ValueError, np.linalg.LinAlgError):
+                l1 = expert_rates[1][i] if 1 in expert_rates else expert_rates[bits[0]][i]
+                l0 = l1 * 2.0
+
+            expert_L0[i] = l0
+
+            if save_plots:
+                print(p, q, r)
+                plt.figure(figsize=(7,4))
+
+                plt.scatter(bits, loss_array, color='red', s=10, label='Original loss (1,2,3,4...)')
+
+                b_dense = np.linspace(0.001, max(bits), 100)
+                y_dense = np.exp(p * b_dense**2 + q * b_dense + r)
+                plt.plot(b_dense, y_dense, 'b-', label=f'Log-quad fit (exp(pb²+qb+r))')
+
+                plt.scatter(0, l0, color='green', s=10, label=f'L0 = {l0:.2f}')
+                plt.scatter(1, l1, color='orange', s=10, label=f'L1 = {l1:.2f}')
+
+                plt.title(f'Expert {expert_idx} | Neuron {i} | L0={l0:.2f}, L1={l1:.2f}')
+                plt.xlabel('bit')
+                plt.ylabel('loss')
+                plt.yscale('log')
+                plt.grid(True)
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(f'plot/bit_loss_fit/exp2_expert_{expert_idx}_neuron_{i}.png', dpi=150)
+                plt.close()
+        
+        L0.append(expert_L0)
+
+    return L0
 
 def generate_valid_m_schemes_general(bits, s, target_bpw, epsilon):
     """
@@ -104,6 +203,7 @@ def enum_optimal_m_scheme_fast_general(rates, s, target_bpw, epsilon = 0):
             bit_idx = bit_to_idx[bit]
             total_loss += block_losses[bit_idx, k]
         
+        # print(f"Scheme: {scheme}, Total Loss: {total_loss:.4f}")
         if total_loss < best_loss:
             best_loss = total_loss
             best_scheme = scheme
@@ -201,33 +301,22 @@ def neuron_level_dp_general(
     
     return neuron_bits
 
-if __name__ == "__main__":
+def test_dp_utils():
     np.random.seed(42)
     n_neurons = 1024
     
-    # ================= 配置搜索空间（灵活调整这里） =================
-    # 示例1：完整搜索空间 0-6
     # bits = [0, 1, 2, 3, 4, 5, 6]
     
-    # 示例2：只搜索 2-4（和原代码一致）
-    # bits = [2, 3, 4]
-    
-    # 示例3：搜索 1,2,3,4（常用场景）
     bits = [2, 3, 4]
-    # =================================================================
     
-    # 生成模拟rates（0bit可以设一个较大的惩罚值）
     rates = {}
-    # 先生成基础r（比如对应4bit）
     r_base = np.random.rand(n_neurons)
-    # 按bit数越低，损失越高的原则生成（模拟量化损失）
-    # 这里简单模拟：bit数每降1，损失乘以1.3 + 噪声
+
     for bit in sorted(bits, reverse=True):
         if bit == max(bits):
             rates[bit] = r_base
         else:
             higher_bit = bit + 1
-            # 确保higher_bit在rates中（如果bits不连续，需要调整逻辑）
             while higher_bit not in rates and higher_bit <= max(bits):
                 higher_bit += 1
             if higher_bit not in rates:
@@ -235,18 +324,15 @@ if __name__ == "__main__":
             else:
                 rates[bit] = rates[higher_bit] * 1.3 + np.random.rand(n_neurons) * 0.1
     
-    # 特殊处理0bit（如果包含）：设为一个固定的高惩罚
     if 0 in bits:
-        rates[0] = np.full(n_neurons, 10.0)  # 0bit惩罚
+        rates[0] = np.full(n_neurons, 10.0)
     
-    # 参数设置
-    s = 8  # 分块数
-    target_bpw = 2.5  # 目标平均位宽
-    epsilon = 0.1  # 允许的误差范围
+    s = 8 
+    target_bpw = 2.5
+    epsilon = 0.1
     
     print(f"Neuron Level DP Config:bits={bits}, s={s}, target_bpw={target_bpw}, epsilon={epsilon}")
     
-    # 运行极速版m-scheme搜索
     print("\n--- Fast m-scheme Search ---")
     tick = time.time()
     best_scheme, neuron_bits_fast = enum_optimal_m_scheme_fast_general(
@@ -254,9 +340,41 @@ if __name__ == "__main__":
     )
     print(f"Fast m-scheme Search Time: {time.time() - tick:.4f} s")
     
-    # （可选）运行神经元级DP作为对比
-    # print("\n--- 运行神经元级DP（对比） ---")运行神经元级DP作为对比
-    # print("\n--- 运行神经元级DP（对比） ---")
-    # tick = time.time()
-    # neuron_bits_dp = neuron_level_dp_general(rates, bits, target_bpw, epsilon)
-    # print(f"耗时: {time.time() - tick:.4f} s")
+
+def test_read_rates_from_file():
+    outlier_bits = {1, 2, 3, 4, }
+    print(f"simulate quant outlier_bits {outlier_bits}")
+
+    model_id = "deepseek-v1-moe-16b"
+    layer_idx = 1
+    cache_dir = f"quant_outlier_/{model_id}"
+    
+    p = 20
+    rates = {}
+    for x in outlier_bits:
+        cache_path = os.path.join(cache_dir, f"{model_id}_L{layer_idx}_b{x}.pt")
+        # print(cache_path)
+        if os.path.exists(cache_path):
+            try:
+                import torch
+                cached_data = torch.load(cache_path, map_location='cpu')
+                print(f"Loading cached quant outlier data for layer {layer_idx}, wbits={x}")
+                rates[x] = [cached_data[0][:p]]
+            except Exception as e:
+                print(f"Failed to load cached data: {e}")
+
+    rates[0] = extrapolate_0bit_loss(rates, save_plots=True)
+    for i in range(p):
+        print(i, end=',')
+        print(f"{rates[4][0][i].item():.4f}", end=',')
+        print(f"{rates[3][0][i].item():.4f}", end=',')
+        print(f"{rates[2][0][i].item():.4f}", end=',')
+        print(f"{rates[1][0][i].item():.4f}", end=',')
+        print(f"{rates[0][0][i].item():.4f}", end=',')
+        print()
+    # print(L0[0][:10])
+
+if __name__ == "__main__":
+    # test_extrapolate_0bit_loss()
+    test_read_rates_from_file()
+    # test_dp_utils()
