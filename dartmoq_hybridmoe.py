@@ -4,35 +4,26 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class DartMoQHybridMoE(nn.Module):
-    """
-    A hybrid MoE module with two-level experts structure for inference only.
-    
-    First level: original experts (routers) - same as original MoE
-    Second level: sliced sub-experts with potentially different sizes
-    
-    This implementation follows the pattern from:
-    - modeling_qwen3_moe.py
-    - modeling_deepseek_v2.py
-    - modeling_deepseek.py
-    """
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.num_experts_per_tok = config.num_experts_per_tok
         
         # First level: original experts (routers)
-        self.experts = nn.ModuleList()  # Will contain sub-expert groups (ModuleList of ModuleLists)
-        self.gate = None  # First level gate
+        self.experts = nn.ModuleList()
+        self.gate = None
         
-        # Meta information for sub-experts - stored per expert
-        self.sub_expert_sizes = []  # List of lists: sizes for each expert's sub-experts
-        self.sub_expert_bit_configs = []  # List of lists: bit configs for each expert's sub-experts
-        self.expert_to_subexperts = []  # Mapping from expert idx to sub-expert indices
+        # Meta information
+        self.sub_expert_sizes = []
+        self.sub_expert_bit_configs = []
+        self.expert_to_subexperts = []
         
-        # Shared experts if present (from original model)
+        # Shared experts
         self.shared_experts = None
+        
+        # Return type flag
+        self.return_tuple = False  # Default to single tensor return
 
     def forward(self, hidden_states):
         """Forward pass through hybrid MoE (inference only)"""
@@ -49,7 +40,6 @@ class DartMoQHybridMoE(nn.Module):
             elif len(gate_output) == 2:
                 topk_idx, topk_weight = gate_output
             else:
-                # For some models, gate returns (topk_idx, topk_weight, aux_loss, router_logits)
                 topk_idx, topk_weight = gate_output[0], gate_output[1]
         else:
             # For simple Linear gates, output is just logits
@@ -66,9 +56,11 @@ class DartMoQHybridMoE(nn.Module):
         if self.shared_experts is not None:
             y = y + self.shared_experts(identity)
         
-        # Return tuple to maintain compatibility with models like Qwen3-MoE that return (output, None)
-        return y, None
-
+        if self.return_tuple:
+            return y, None
+        else:
+            return y
+        
     def _forward_sub_experts(self, sub_experts, hidden_states):
         """
         Forward through sub-experts within an expert group.
@@ -133,10 +125,10 @@ def restructure_hybrid_qscheme(qscheme_expert, slice_expert_num):
         for bit in qscheme_expert[expert_idx]:
             bit_counts[bit] = bit_counts.get(bit, 0) + 1
         
-        # Create list of unique bits, sorted by bit value
-        expert_bits = sorted(bit_counts.items(), key=lambda x: x[0])
+        # Create list of unique bits, sorted by bit value (descending), consistent with sub-expert creation order
+        expert_bits = sorted(bit_counts.items(), reverse=True)
         restructured.append([bit for bit, count in expert_bits])
         
-        print(f"Expert {expert_idx}: original={qscheme_expert[expert_idx]} -> restructured={restructured[-1]}")
+        print(f"Expert {expert_idx} original: {qscheme_expert[expert_idx]} -> restructured: {restructured[-1]}")
     
     return restructured

@@ -12,6 +12,7 @@ from camera_utils import analyze_expert_energy
 from dp_utils import enum_optimal_m_scheme_fast_general
 from dp_utils import extrapolate_0bit_loss
 from tool_utils import *
+from collections import Counter
 
 DEV = torch.device('cuda:0')
 
@@ -29,7 +30,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     if use_hybrid_moe:
         # Hybrid MoE: keep original expert count at first level
         new_expert_num = ori_expert_num
-        scaling_factor = 1
+        scaling_factor = slice_expert_num
     else:
         new_expert_num = ori_expert_num * slice_expert_num 
         scaling_factor = slice_expert_num
@@ -141,7 +142,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         )
         
         expert_groups = expert_groups[1:]
-        all_expert_groups.append(expert_groups)  # Save groups for this expert
+        all_expert_groups.append(expert_groups)
         
         if "global" in args.quant_scheme :
             _rates = [e * expert_activation_rates[expert_idx] for e in expert_rates[1:]]
@@ -152,12 +153,8 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     # print(qscheme)
     if 'target_bpw' in qscheme:
         qscheme['expert'] = dpscheme_list
-        try:
-            from collections import Counter
-            counter = Counter(dpscheme_list)
-            print(f"layer {layer_idx} {qscheme['target_bpw']} dpscheme_list scheme type count: {counter}")
-        except:
-            pass
+        counter = Counter(dpscheme_list)
+        print(f"layer {layer_idx} {qscheme['target_bpw']} dpscheme_list scheme type count: {counter}")
     elif "global" in args.quant_scheme :
         ee = qscheme['econfig']
         e_bits = [int(e) for e in ee]
@@ -165,15 +162,18 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         if all_new_expert_rates is not None:
             _, sorted_index = torch.sort(torch.tensor(all_new_expert_rates), descending=True)
             sect_ = n_experts // slice_expert_num
+            # print(e_bits, sect_, n_experts)
             qscheme['expert'] = [[0] * slice_expert_num for i in range(n_experts // slice_expert_num)]
             for i, idx in enumerate(sorted_index):
+                # print(idx, all_new_expert_rates[idx])
                 xi = int(idx // slice_expert_num)
                 xj = int(idx % slice_expert_num)
                 qscheme['expert'][xi][xj] = e_bits[i // sect_]
     
     # For hybrid MoE: restructure qscheme to group by bit config
-    if use_hybrid_moe and 'expert' in qscheme:
-        qscheme['expert'] = restructure_hybrid_qscheme(qscheme['expert'], slice_expert_num)
+    if use_hybrid_moe:
+        qscheme['slice_expert'] = qscheme['expert']
+        qscheme['expert'] = restructure_hybrid_qscheme(qscheme['slice_expert'], slice_expert_num)
 
     for expert_idx, expert in enumerate(layer.mlp.experts):
         ori_gate_proj_weights = expert.gate_proj.weight
@@ -187,35 +187,31 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
             # Hybrid MoE: group sub-experts by bit config
             expert_sub_experts = []
             expert_sub_sizes = []
-            
-            # Get bit config for this expert
-            expert_bit_config = qscheme.get('expert', [[0]*slice_expert_num])[expert_idx]
-            if not isinstance(expert_bit_config, list):
-                expert_bit_config = [expert_bit_config] * slice_expert_num
-            
-            # Group indices by bit config
-            # Group indices by bit config and track original slice counts
-            bit_to_indices = {}
-            bit_to_slice_count = {}  # Track how many original slices are merged for each bit
 
-            for ii, group_indices in enumerate(expert_groups):
-                bit = expert_bit_config[ii % len(expert_bit_config)]
+            orig_bit_config = qscheme['slice_expert'][expert_idx]
+            restructured_config = qscheme['expert'][expert_idx]
+
+            print("orig_bit_config:", orig_bit_config, "restructured_config:", restructured_config)
+
+            bit_to_indices = {}
+            bit_to_slice_count = {}
+            
+            for bit, group_indices in zip(orig_bit_config, expert_groups):
                 if bit not in bit_to_indices:
                     bit_to_indices[bit] = []
                     bit_to_slice_count[bit] = 0
                 bit_to_indices[bit].extend(group_indices)
-                bit_to_slice_count[bit] += 1  # Count original slices merged
+                bit_to_slice_count[bit] += 1
             
-            for bit, indices in bit_to_indices.items():
-                if not indices:
-                    continue
+            for bit in restructured_config:
+                indices = bit_to_indices[bit]
                 n_neurons = len(indices)
-                
-                # Calculate scaling factor: original scaling_factor divided by the number of merged sub-experts
-                # Original: split into slice_expert_num sub-experts, each needs scaling_factor = slice_expert_num
-                # Now: some sub-experts are merged, so we need to adjust
+
+                # Get the number of merged original slices
                 merged_count = bit_to_slice_count[bit]
                 adjusted_scaling_factor = scaling_factor / merged_count
+                # print(bit, indices)
+                print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons} merged_count={merged_count} scaling_factor={scaling_factor} adjusted={adjusted_scaling_factor}")
                 
                 expert_mlp = expert.__class__(model.config).to(device)
                 
@@ -230,11 +226,11 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 total_neurons_processed += n_neurons
             
             all_new_experts.append(expert_sub_experts)
-            sub_expert_bit_configs.append(list(bit_to_indices.keys()))
+            sub_expert_bit_configs.append(tuple(restructured_config))
             expert_to_subexperts.append(list(range(len(expert_sub_experts))))
             
             # For hybrid MoE, router stays the same (one entry per original expert)
-            new_router.weight.data[expert_idx:expert_idx+1, :] = ori_router_gate.data[expert_idx, :].unsqueeze(0).to(device).detach().clone()
+            new_router.weight.data[expert_idx, :] = ori_router_gate.data[expert_idx, :].unsqueeze(0).to(device).detach().clone()
         else:
             # Original behavior: create separate expert for each slice
             for ii, group_indices in enumerate(expert_groups):
@@ -275,8 +271,14 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         moe.experts = nn.ModuleList([nn.ModuleList(sub_experts) for sub_experts in all_new_experts])
         moe.sub_expert_bit_configs = sub_expert_bit_configs
         moe.expert_to_subexperts = expert_to_subexperts
+        
+        counter = Counter(moe.sub_expert_bit_configs)
+        print("reconstruct moe with sub_expert_bit_configs: ", counter) 
         if hasattr(layer.mlp, 'shared_experts'):
             moe.set_shared_experts(layer.mlp.shared_experts)
+        
+        # Set return type based on model type: DeepSeek models expect single tensor return, Qwen3-MoE expects tuple return
+        moe.return_tuple = model.config.model_type in ['olmoe', 'qwen3_moe', 'qwen3']
     else:
         # Original behavior
         moe = layer.mlp.__class__(model.config).to(device)
@@ -286,7 +288,6 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         moe.experts = all_new_experts
         if hasattr(layer.mlp, 'shared_experts'):
             moe.shared_experts = layer.mlp.shared_experts
-
     gc.collect()
     torch.cuda.empty_cache()
 
