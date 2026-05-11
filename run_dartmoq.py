@@ -61,6 +61,9 @@ if __name__ == '__main__':
     parser.add_argument(        '--standby-layer-cpu', action='store_true', default=False,
         help='Whether to move quant layers to CPU before and after quantization.' 
     )
+    parser.add_argument(        '--use-hybrid-moe', action='store_true', default=False,
+        help='Use hybrid MoE structure with two-level experts.' 
+    )
 
     args = parser.parse_args()
     

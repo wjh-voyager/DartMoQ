@@ -411,6 +411,9 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
         filters = ffn_filters
 
     loss = {}
+    
+    # Check if using hybrid MoE
+    use_hybrid_moe = hasattr(layer.mlp, 'sub_expert_bit_configs')
 
     for ff in filters:
         qmodule_all = find_layers(layer, filters=[ff])
@@ -431,15 +434,36 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     bit = qscheme['attn']
                     gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
                 else:
-                    match = re.search(r'mlp\.experts\.(\d+)', name)
-                    expert_id = int(match.group(1)) if match else -1  ## shared expert id is -1
-                    # print(expert_id, slice_expert_num)
-                    if expert_id == -1:
-                        bit = qscheme['share']
-                        gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                    # Check for hybrid MoE structure: mlp.experts.expert_idx.sub_expert_idx.proj
+                    hybrid_match = re.search(r'mlp\.experts\.(\d+)\.(\d+)\.', name)
+                    if hybrid_match and use_hybrid_moe:
+                        # Hybrid MoE: mlp.experts.expert_idx.sub_expert_idx
+                        expert_id = int(hybrid_match.group(1))
+                        sub_expert_id = int(hybrid_match.group(2))
+                        bit_config = qscheme.get('expert', [[0]])[expert_id]
+                        if isinstance(bit_config, list):
+                            bit = bit_config[sub_expert_id] if sub_expert_id < len(bit_config) else bit_config[0]
+                        else:
+                            bit = bit_config
+                        gptq[name].quantizer.configure(bit, perchannel=True, sym=sym, mse=False)
                     else:
-                        bit = qscheme['expert']
-                        gptq[name].quantizer.configure(bit[expert_id // slice_expert_num][expert_id % slice_expert_num], perchannel=True, sym=sym, mse=False)
+                        # Standard MoE structure
+                        match = re.search(r'mlp\.experts\.(\d+)', name)
+                        expert_id = int(match.group(1)) if match else -1
+                        if expert_id == -1:
+                            bit = qscheme.get('share', [8])
+                            gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                        else:
+                            bit = qscheme.get('expert', [[0]])
+                            if isinstance(bit, list) and len(bit) > 0:
+                                expert_bit = bit[expert_id // slice_expert_num]
+                                if isinstance(expert_bit, list):
+                                    final_bit = expert_bit[expert_id % slice_expert_num] if (expert_id % slice_expert_num) < len(expert_bit) else expert_bit[0]
+                                else:
+                                    final_bit = expert_bit
+                                gptq[name].quantizer.configure(final_bit, perchannel=True, sym=sym, mse=False)
+                            else:
+                                gptq[name].quantizer.configure(8, perchannel=True, sym=sym, mse=False)
 
             def add_batch(name):
                 def tmp(_, inp, out):
