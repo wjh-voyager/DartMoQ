@@ -39,7 +39,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     if args.rank_mode == "quant_outlier":
         tick0 = time.time()
 
-        all_rates = {}
+        q_rates = {}
         if 'target_bpw' not in qscheme:
             outlier_bits = {2}
         else:
@@ -55,31 +55,45 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 try:
                     cached_data = torch.load(cache_path, map_location=device)
                     print(f"Loading cached quant outlier data for layer {layer_idx}, wbits={x}", flush=True)
-                    all_rates[x] = cached_data
+                    q_rates[x] = cached_data
                     continue
                 except Exception as e:
                     print(f"Failed to load cached data {e}")
             
             if x == 0:
                 print(f"Computing extrapolate 0 bit loss for layer {layer_idx}")
-                all_rates[0] = extrapolate_0bit_loss(all_rates)
-                all_rates[0] = [torch.from_numpy(all_rates[0][i]).to(device) for i in range(len(all_rates[0]))]
+                q_rates[0] = extrapolate_0bit_loss(q_rates)
+                q_rates[0] = [torch.from_numpy(q_rates[0][i]).to(device) for i in range(len(q_rates[0]))]
             else:
                 print(f"Computing quant outlier for layer {layer_idx}, wbits={x}")
-                all_rates[x] = analyze_quant_outlier(layer, layer_idx, inps, ori_expert_num, wbits=x, save_path=None)
-            torch.save(all_rates[x], cache_path)
+                q_rates[x] = analyze_quant_outlier(layer, layer_idx, inps, ori_expert_num, wbits=x, save_path=None)
+            torch.save(q_rates[x], cache_path)
             print(f"Saved quant outlier data to {cache_path}")
-
+        
+        if 'target_bpw' not in qscheme:
+            all_rates = q_rates[2]
+        else:
+            all_rates = []
+            dpscheme_list = []
+            for expert_idx in range(ori_expert_num):
+                rates_x = {}
+                for x in outlier_bits:
+                    rates_x[x] = q_rates[x][expert_idx].detach().cpu().numpy()
+                # print(f"expert_idx {expert_idx} scheme search:")
+                dpscheme, rates = enum_optimal_m_scheme_fast_general(rates_x, slice_expert_num, target_bpw=qscheme['target_bpw'])
+                dpscheme_list.append(dpscheme)
+                rates = torch.from_numpy(rates).to(device)
+                all_rates.append(rates)
+            
         # from visual_utils import plot_diff_wbits_correlation, plot_spearman_rank_correlation
-        # # plot_diff_wbits_correlation(model.config.model_type, layer_idx, ori_expert_num, all_rates[2], all_rates[3], all_rates[4])
-        # plot_spearman_rank_correlation(model.config.model_type, layer_idx, ori_expert_num, all_rates[2], all_rates[3], all_rates[4])
+        # # plot_diff_wbits_correlation(model.config.model_type, layer_idx, ori_expert_num, q_rates[2], q_rates[3], q_rates[4])
+        # plot_spearman_rank_correlation(model.config.model_type, layer_idx, ori_expert_num, q_rates[2], q_rates[3], q_rates[4])
         tick1 = time.time()
         print(f"analyze quant outlier time {tick1 - tick0}", flush=True)
 
     tick0 = time.time()
 
     all_new_expert_rates = []
-    dpscheme_list = []
     for expert_idx, expert in enumerate(layer.mlp.experts):
         ori_gate_proj_weights = expert.gate_proj.weight
         ori_up_proj_weights = expert.up_proj.weight
@@ -92,16 +106,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         elif args.rank_mode == "energy":
             rates = analyze_expert_energy(expert, inps)
         elif args.rank_mode == "quant_outlier":
-            if 'target_bpw' not in qscheme:
-                rates = all_rates[2][expert_idx]
-            else:
-                rates_x = {}
-                for x in outlier_bits:
-                    rates_x[x] = all_rates[x][expert_idx].detach().cpu().numpy()
-                # print(f"expert_idx {expert_idx} scheme search:")
-                dpscheme, rates = enum_optimal_m_scheme_fast_general(rates_x, slice_expert_num, target_bpw=qscheme['target_bpw'])
-                dpscheme_list.append(dpscheme)
-                rates = torch.from_numpy(rates).to(device)
+            rates = all_rates[expert_idx]
         elif args.rank_mode == "random":
             rates = torch.randn(layer.mlp.intermediate_size, device=device)
         elif args.rank_mode == "neuron_index":
