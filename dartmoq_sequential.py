@@ -95,12 +95,12 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
 
     all_new_expert_rates = []
     for expert_idx, expert in enumerate(layer.mlp.experts):
-        ori_gate_proj_weights = expert.gate_proj.weight
-        ori_up_proj_weights = expert.up_proj.weight
-        ori_down_proj_weights = expert.down_proj.weight
-
         # print(f"\nProcessing original expert {expert_idx} / {ori_expert_num}")
         if args.rank_mode == "activation":
+            ori_gate_proj_weights = expert.gate_proj.weight
+            ori_up_proj_weights = expert.up_proj.weight
+            ori_down_proj_weights = expert.down_proj.weight
+
             analyze_sparsity = 0.1
             rates = analyze_neuron_activations(expert.act_fn, inps, ori_gate_proj_weights, ori_up_proj_weights, sparsity=analyze_sparsity)
         elif args.rank_mode == "energy":
@@ -125,6 +125,36 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
             all_new_expert_rates.extend(_rates)
         else:
             all_new_expert_rates.extend(expert_rates[1:])
+
+    # print(qscheme)
+    if 'target_bpw' in qscheme:
+        qscheme['expert'] = dpscheme_list
+        try:
+            from collections import Counter
+            counter = Counter(dpscheme_list)
+            print(f"layer {layer_idx} {qscheme['target_bpw']} dpscheme_list scheme type count: {counter}")
+        except:
+            pass
+    elif "global" in args.quant_scheme :
+        ee = qscheme['econfig']
+        e_bits = [int(e) for e in ee]
+
+        # print(all_new_expert_rates)
+        if all_new_expert_rates is not None:
+            _, sorted_index = torch.sort(torch.tensor(all_new_expert_rates), descending=True)
+            sect_ = n_experts // slice_expert_num
+            # print(e_bits, sect_, n_experts)
+            qscheme['expert'] = [[0] * slice_expert_num for i in range(n_experts // slice_expert_num)]
+            for i, idx in enumerate(sorted_index):
+                # print(idx, all_new_expert_rates[idx])
+                xi = int(idx // slice_expert_num)
+                xj = int(idx % slice_expert_num)
+                qscheme['expert'][xi][xj] = e_bits[i // sect_]
+
+    for expert_idx, expert in enumerate(layer.mlp.experts):
+        ori_gate_proj_weights = expert.gate_proj.weight
+        ori_up_proj_weights = expert.up_proj.weight
+        ori_down_proj_weights = expert.down_proj.weight
 
         # Create new experts for this original expert
         for ii, group_indices in enumerate(expert_groups):
@@ -167,31 +197,6 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
 
     gc.collect()
     torch.cuda.empty_cache()
-
-    # print(qscheme)
-    if 'target_bpw' in qscheme:
-        qscheme['expert'] = dpscheme_list
-        try:
-            from collections import Counter
-            counter = Counter(dpscheme_list)
-            print(f"layer {layer_idx} {qscheme['target_bpw']} dpscheme_list scheme type count: {counter}")
-        except:
-            pass
-    elif "global" in args.quant_scheme :
-        ee = qscheme['econfig']
-        e_bits = [int(e) for e in ee]
-
-        # print(all_new_expert_rates)
-        if all_new_expert_rates is not None:
-            _, sorted_index = torch.sort(torch.tensor(all_new_expert_rates), descending=True)
-            sect_ = n_experts // slice_expert_num
-            # print(e_bits, sect_, n_experts)
-            qscheme['expert'] = [[0] * slice_expert_num for i in range(n_experts // slice_expert_num)]
-            for i, idx in enumerate(sorted_index):
-                # print(idx, all_new_expert_rates[idx])
-                xi = int(idx // slice_expert_num)
-                xj = int(idx % slice_expert_num)
-                qscheme['expert'][xi][xj] = e_bits[i // sect_]
 
     return moe
 
