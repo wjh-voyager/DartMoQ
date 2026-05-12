@@ -208,7 +208,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 n_neurons = len(indices)
 
                 # print(bit, indices)
-                print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}")
+                print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}, indices[:5]={indices[:5]}")
                 
                 expert_mlp = expert.__class__(model.config).to(device)
                 

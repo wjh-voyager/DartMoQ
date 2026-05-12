@@ -398,7 +398,6 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
     nsample = attn_hidden_states.shape[0]
     assert attn_hidden_states.shape[0] == ffn_hidden_states.shape[0], f"attn_hidden_states.shape: {attn_hidden_states.shape}, ffn_hidden_states.shape: {ffn_hidden_states.shape}"
 
-    gptq = {}
     groupsize = 128
     act_order = True
     static_groups = False
@@ -409,15 +408,15 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
         filters = attn_filters + ffn_filters
     else:
         filters = ffn_filters
-
-    loss = {}
     
     # Check if using hybrid MoE
     use_hybrid_moe = hasattr(layer.mlp, 'sub_expert_bit_configs')
 
     for ff in filters:
         qmodule_all = find_layers(layer, filters=[ff])
-        qbatch = min(QBATCH, n_experts)
+        qbatch = QBATCH
+        gptq = {}
+        loss = {}
 
         for qmi in range(0, len(qmodule_all.keys()), qbatch):
             tick0 = time.time()
@@ -441,7 +440,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                         expert_id = int(hybrid_match.group(1))
                         sub_expert_id = int(hybrid_match.group(2))
                         bit_config = qscheme['expert'][expert_id]
-                        print(bit_config, expert_id, sub_expert_id, bit_config[sub_expert_id], name)
+                        # print(bit_config, expert_id, sub_expert_id, bit_config[sub_expert_id], name)
                         bit = bit_config[sub_expert_id]
                         gptq[name].quantizer.configure(bit, perchannel=True, sym=sym, mse=False)
                     else:
@@ -520,15 +519,20 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     gptq[name].free()
                     del gptq[name]
 
-            # print(ff, qmodule, loss)
             tick2 = time.time()
-            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} loss: {loss[name].sum():.6f}")
+            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} last op {name} loss: {loss[name].sum():.6f}")
             del qmodule
 
+            if 'up' in name:
+                for name in loss.keys():
+                    l = loss[name].cpu()
+                    print(name, l[:5,:5], l.sum(dim=0)[:5], l.sum(dim=1)[:5], l.sum())
+                assert False, "Stop"
+
         del qmodule_all
-    
+        del loss, gptq
+
     torch.cuda.synchronize()
 
-    del loss, gptq
     torch.cuda.empty_cache()
     gc.collect()
