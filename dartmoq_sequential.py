@@ -207,11 +207,8 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 indices = bit_to_indices[bit]
                 n_neurons = len(indices)
 
-                # Get the number of merged original slices
-                merged_count = bit_to_slice_count[bit]
-                adjusted_scaling_factor = scaling_factor / merged_count
                 # print(bit, indices)
-                print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons} merged_count={merged_count} scaling_factor={scaling_factor} adjusted={adjusted_scaling_factor}")
+                print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}")
                 
                 expert_mlp = expert.__class__(model.config).to(device)
                 
@@ -219,7 +216,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                     indices_tensor = torch.tensor(indices, dtype=torch.long, device=ori_gate_proj_weights.device)
                     expert_mlp.gate_proj.weight.data = ori_gate_proj_weights[indices_tensor, :].detach().clone()
                     expert_mlp.up_proj.weight.data = ori_up_proj_weights[indices_tensor, :].detach().clone()
-                    expert_mlp.down_proj.weight.data = ori_down_proj_weights[:, indices_tensor].detach().clone() * adjusted_scaling_factor
+                    expert_mlp.down_proj.weight.data = ori_down_proj_weights[:, indices_tensor].detach().clone()
                 
                 expert_sub_experts.append(expert_mlp)
                 expert_sub_sizes.append(n_neurons)

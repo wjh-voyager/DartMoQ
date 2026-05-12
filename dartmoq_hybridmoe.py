@@ -66,9 +66,7 @@ class DartMoQHybridMoE(nn.Module):
         Forward through sub-experts within an expert group.
         Sub-experts may have different sizes (intermediate_size).
         """
-        if len(sub_experts) == 1:
-            return sub_experts[0](hidden_states)
-        
+
         # For multiple sub-experts, concatenate outputs along hidden dimension
         outputs = []
         for sub_expert in sub_experts:
@@ -129,6 +127,6 @@ def restructure_hybrid_qscheme(qscheme_expert, slice_expert_num):
         expert_bits = sorted(bit_counts.items(), reverse=True)
         restructured.append([bit for bit, count in expert_bits])
         
-        print(f"Expert {expert_idx} original: {qscheme_expert[expert_idx]} -> restructured: {restructured[-1]}")
+        print(f"Expert {expert_idx} original: {qscheme_expert[expert_idx]} -> restructured: {restructured[expert_idx]} {expert_bits}")
     
     return restructured
