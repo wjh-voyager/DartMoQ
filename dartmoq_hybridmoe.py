@@ -1,5 +1,3 @@
-# /home/daodao/Develop/DartMoQ/dartmoq_hybridmoe.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,78 +23,61 @@ class DartMoQHybridMoE(nn.Module):
         # Return type flag
         self.return_tuple = False  # Default to single tensor return
 
-    def forward(self, hidden_states):
-        """Forward pass through hybrid MoE (inference only)"""
-        identity = hidden_states
-        orig_shape = hidden_states.shape
-        
-        # First level routing (handle different gate return types)
-        gate_output = self.gate(hidden_states)
-        
-        # Handle different gate return formats
-        if isinstance(gate_output, tuple):
-            if len(gate_output) == 3:
-                topk_idx, topk_weight, _ = gate_output
-            elif len(gate_output) == 2:
-                topk_idx, topk_weight = gate_output
-            else:
-                topk_idx, topk_weight = gate_output[0], gate_output[1]
-        else:
-            # For simple Linear gates, output is just logits
-            router_logits = gate_output
-            topk_weight, topk_idx = torch.topk(F.softmax(router_logits, dim=-1), self.num_experts_per_tok)
-        
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        flat_topk_idx = topk_idx.view(-1)
-        
-        # Inference mode with efficient implementation
-        y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
-        
-        # Add shared experts output if present
-        if self.shared_experts is not None:
-            y = y + self.shared_experts(identity)
-        
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        router_logits = self.gate(hidden_states)
+
+        num_experts = len(self.experts)
+        # print(f"Router logits shape: {router_logits.shape}, num_experts: {num_experts}")
+
+        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights, selected_experts = torch.topk(routing_weights, self.num_experts_per_tok, dim=-1)
+
+        # we cast back to the input dtype
+        routing_weights = routing_weights.to(hidden_states.dtype)
+
+        final_hidden_states = torch.zeros(
+            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
+        )
+
+        # One hot encode the selected experts to create an expert mask
+        # this will be used to easily index which expert is going to be selected
+        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=num_experts).permute(2, 1, 0)
+
+        # Loop over all available experts in the model and perform the computation on each expert
+        for expert_idx in range(num_experts):
+            expert_layer = self.experts[expert_idx]
+            idx, top_x = torch.where(expert_mask[expert_idx])
+
+            # Index the correct hidden states and compute the expert hidden state for
+            # the current expert. We need to make sure to multiply the output hidden
+            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
+            current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
+            output = self._forward_sub_experts(expert_layer, current_state)
+            current_hidden_states = output * routing_weights[top_x, idx, None]
+
+            # However `index_add_` only support torch tensors for indexing so we'll use
+            # the `top_x` tensor here.
+            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+
         if self.return_tuple:
-            return y, None
+            return final_hidden_states, router_logits
         else:
-            return y
-        
+            return final_hidden_states
+
     def _forward_sub_experts(self, sub_experts, hidden_states):
-        """
-        Forward through sub-experts within an expert group.
-        Sub-experts may have different sizes (intermediate_size).
-        """
-
-        # For multiple sub-experts, concatenate outputs along hidden dimension
-        outputs = []
+        assert len(sub_experts) > 0
+        
+        # Process each sub-expert and accumulate results
+        total_output = torch.zeros_like(hidden_states)
+        
         for sub_expert in sub_experts:
-            outputs.append(sub_expert(hidden_states))
-        return torch.cat(outputs, dim=-1)
-
-    @torch.no_grad()
-    def moe_infer(self, x, flat_expert_indices, flat_expert_weights):
-        """Efficient inference implementation for hybrid MoE"""
-        expert_cache = torch.zeros_like(x)
-        idxs = flat_expert_indices.argsort()
-        tokens_per_expert = flat_expert_indices.bincount().cpu().numpy().cumsum(0)
-        token_idxs = idxs // self.num_experts_per_tok
-        
-        for i, end_idx in enumerate(tokens_per_expert):
-            start_idx = 0 if i == 0 else tokens_per_expert[i-1]
-            if start_idx == end_idx:
-                continue
+            sub_expert_output = sub_expert(hidden_states)
+            total_output = total_output + sub_expert_output
             
-            # Get sub-experts for this expert
-            sub_experts = self.experts[i]
-            exp_token_idx = token_idxs[start_idx:end_idx]
-            expert_tokens = x[exp_token_idx]
-            
-            # Forward through sub-experts
-            expert_out = self._forward_sub_experts(sub_experts, expert_tokens)
-            expert_out.mul_(flat_expert_weights[idxs[start_idx:end_idx]])
-            expert_cache.scatter_reduce_(0, exp_token_idx.view(-1, 1).repeat(1, x.shape[-1]), expert_out, reduce='sum')
-        
-        return expert_cache
+        return total_output
 
     def set_shared_experts(self, shared_experts):
         """Set shared experts from original model"""
@@ -127,6 +108,6 @@ def restructure_hybrid_qscheme(qscheme_expert, slice_expert_num):
         expert_bits = sorted(bit_counts.items(), reverse=True)
         restructured.append([bit for bit, count in expert_bits])
         
-        print(f"Expert {expert_idx} original: {qscheme_expert[expert_idx]} -> restructured: {restructured[expert_idx]} {expert_bits}")
+        # print(f"Expert {expert_idx} original: {qscheme_expert[expert_idx]} -> restructured: {restructured[expert_idx]} {expert_bits}")
     
     return restructured

@@ -69,7 +69,7 @@ if __name__ == '__main__':
     
     print("-" * 50)
     print("Loading model: (ppl)", args.model)
-    print("slices/quant-scheme/rank-mode: (ppl)", args.slices, args.quant_scheme, args.rank_mode)
+    print("slices/quant-scheme/rank-mode/moe-struct: (ppl)", args.slices, args.quant_scheme, args.rank_mode, "use_hybrid_moe" if args.use_hybrid_moe else " use_origin_moe")
     model, tokenizer = load_model(args.model)
 
     dataloader, _ = get_loaders(

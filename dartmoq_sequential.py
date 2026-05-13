@@ -36,11 +36,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         scaling_factor = slice_expert_num
 
     ori_router_gate = layer.mlp.gate.weight
-    if type(layer.mlp.gate) == nn.Linear:
-        new_router = nn.Linear(model.config.hidden_size, new_expert_num, dtype=ori_router_gate.dtype, bias=False).to(device)
-    else:
-        new_router = layer.mlp.gate.__class__(model.config).to(device).to(layer.mlp.gate.weight.dtype)
-        # new_router.training = False ### for moonlight model
+    new_router = nn.Linear(model.config.hidden_size, new_expert_num, dtype=ori_router_gate.dtype, bias=False).to(device)
     
     if use_hybrid_moe:
         # Hybrid MoE uses nested structure: experts -> sub-experts
@@ -169,6 +165,8 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 xi = int(idx // slice_expert_num)
                 xj = int(idx % slice_expert_num)
                 qscheme['expert'][xi][xj] = e_bits[i // sect_]
+    else:
+        qscheme['expert'] = [qscheme['econfig'] for i in range(n_experts // slice_expert_num)]
     
     # For hybrid MoE: restructure qscheme to group by bit config
     if use_hybrid_moe:
@@ -190,8 +188,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
 
             orig_bit_config = qscheme['slice_expert'][expert_idx]
             restructured_config = qscheme['expert'][expert_idx]
-
-            print("orig_bit_config:", orig_bit_config, "restructured_config:", restructured_config)
+            # print("orig_bit_config:", orig_bit_config, "restructured_config:", restructured_config)
 
             bit_to_indices = {}
             bit_to_slice_count = {}
@@ -208,7 +205,8 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 n_neurons = len(indices)
 
                 # print(bit, indices)
-                print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}, indices[:5]={indices[:5]}")
+                # if expert_idx < 2:
+                #     print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}, indices[:5]={indices[:5]} {indices[-5:]}")
                 
                 expert_mlp = expert.__class__(model.config).to(device)
                 
@@ -232,6 +230,8 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
             # Original behavior: create separate expert for each slice
             for ii, group_indices in enumerate(expert_groups):
                 n_neurons = len(group_indices)
+                # if expert_idx < 2:
+                #     print(f"layer {layer_idx} expert {expert_idx} slice {ii} n_neurons={n_neurons}, group_indices={group_indices[:5]} {group_indices[-5:]}")
                 expert_mlp = expert.__class__(model.config).to(device)
                 
                 with torch.no_grad():

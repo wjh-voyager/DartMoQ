@@ -459,7 +459,10 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     gptq[name].add_batch(inp[0].data.detach(), out.data.detach())
                 return tmp
             handles = []
+            # print("Registering hooks for modules: qmodule.keys():", qmodule.keys())
             for name in qmodule.keys():
+                # if 'up' in name:
+                #     print(f"Registering hook for {name} with bit configuration: {gptq[name].quantizer.bits} bits")
                 handles.append(qmodule[name].register_forward_hook(add_batch(name)))
             
             for isample in range(nsample):
@@ -520,14 +523,8 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     del gptq[name]
 
             tick2 = time.time()
-            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} last op {name} loss: {loss[name].sum():.6f}")
+            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} last op {name} loss: {loss[name].sum():.6f}", flush=True)
             del qmodule
-
-            if 'up' in name:
-                for name in loss.keys():
-                    l = loss[name].cpu()
-                    print(name, l[:5,:5], l.sum(dim=0)[:5], l.sum(dim=1)[:5], l.sum())
-                assert False, "Stop"
 
         del qmodule_all
         del loss, gptq
