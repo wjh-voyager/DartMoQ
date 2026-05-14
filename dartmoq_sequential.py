@@ -36,12 +36,16 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         scaling_factor = slice_expert_num
 
     ori_router_gate = layer.mlp.gate.weight
-    new_router = nn.Linear(model.config.hidden_size, new_expert_num, dtype=ori_router_gate.dtype, bias=False).to(device)
     
     if use_hybrid_moe:
         # Hybrid MoE uses nested structure: experts -> sub-experts
+        new_router = nn.Linear(model.config.hidden_size, new_expert_num, dtype=ori_router_gate.dtype, bias=False).to(device)
         all_new_experts = []  # List of lists (each expert has sub-experts)
     else:
+        if type(layer.mlp.gate) == nn.Linear:
+            new_router = nn.Linear(model.config.hidden_size, new_expert_num, dtype=ori_router_gate.dtype, bias=False).to(device)
+        else:
+            new_router = layer.mlp.gate.__class__(model.config).to(device).to(layer.mlp.gate.weight.dtype)
         all_new_experts = nn.ModuleList()
 
     total_neurons_processed = 0

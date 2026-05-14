@@ -7,13 +7,17 @@ export CUDA_VISIBLE_DEVICES=0,1
 export HF_DATASETS_OFFLINE=1 
 export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128,roundup_power2_divisions:4"
 
-python run_dartmoq.py ~/models/OLMoE-1B-7B-0924-Instruct/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.125 --use-hybrid-moe
+# python run_dartmoq.py ~/models/OLMoE-1B-7B-0924-Instruct/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.125 --use-hybrid-moe
 # python run_dartmoq.py ~/models/OLMoE-1B-7B-0924-Instruct/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.125
 
 # python run_dartmoq.py ~/models/OLMoE-1B-7B-0924-Instruct/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.125 --use-hybrid-moe
 # python run_dartmoq.py ~/models/OLMoE-1B-7B-0924-Instruct/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.25 --use-hybrid-moe
 # python run_dartmoq.py ~/models/OLMoE-1B-7B-0924-Instruct/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.375 --use-hybrid-moe
-# python run_dartmoq.py ~/models/deepseek-moe-16b-base/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m2.125 --use-hybrid-moe
+
+python run_dartmoq.py ~/models/DeepSeek-V2-Lite/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m2.125 --use-hybrid-moe
+
+python run_dartmoq.py ~/models/deepseek-moe-16b-base/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m2.125 --use-hybrid-moe
+python run_dartmoq.py ~/models/deepseek-moe-16b-base/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m3.125 --use-hybrid-moe
 # python run_dartmoq.py ~/models/Qwen3-30B-A3B/ wikitext2 --slices 8 --nsamples 64 --rank-mode quant_outlier --quant-scheme bpw-a8s8m2.125 --use-hybrid-moe
 
 

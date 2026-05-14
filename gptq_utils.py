@@ -150,10 +150,10 @@ class GPTQ:
         self.layer = layer
         self.dev = self.layer.weight.device
         # [N, K]
-        W = layer.weight.data.clone()
-        # self.W0 = self.layer.weight.data.clone()
-        self.rows = W.shape[0]      # N
-        self.columns = W.shape[1]   # K
+        # w = layer.weight.data.clone()
+        self.w0 = self.layer.weight.data.clone()
+        self.rows = self.w0.shape[0]      # N
+        self.columns = self.w0.shape[1]   # K
         # [K, K]
         self.H = torch.zeros((self.columns, self.columns), device=self.dev)
         self.nsamples = 0
@@ -177,7 +177,9 @@ class GPTQ:
         # self.H += 2 / self.nsamples * inp.matmul(inp.t())
         self.H += inp.matmul(inp.t()) # [K, K]
 
-        # print("test x", self.nsamples, inp[0, :2], self.H[0, :2])
+        # if self.nsamples == 30:
+        #     print("test x", self.nsamples, inp.shape, tmp, inp.sum(dim=0))
+        #     print(inp.sum(dim=1))
         # print(self.layer, inp.shape, self.nsamples, self.H)
 
     @torch.no_grad()

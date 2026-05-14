@@ -450,6 +450,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                         if expert_id == -1:
                             bit = qscheme['share']
                             gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                            print(f"share module: {name}, bit: {bit[0]}")
                         else:
                             bit = qscheme['expert']
                             gptq[name].quantizer.configure(bit[expert_id // slice_expert_num][expert_id % slice_expert_num], perchannel=True, sym=sym, mse=False)
@@ -517,13 +518,47 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
             for ss in streams:
                 ss.synchronize()
 
+            # for name in gptq.keys():
+            #     if 'up' in name or 'down' in name:
+            #         if 'experts.0.' in name or 'experts.1.' in name or 'experts.2.' in name:
+            #             l = loss[name].cpu()
+            #             print(name)
+            #             # print(gptq[name].rows, gptq[name].columns, gptq[name].nsamples)
+            #             # c = gptq[name].quantizer
+            #             # print(c.bits, c.perchannel, c.sym, c.mse, c.norm, c.grid, c.maxshrink)
+            #             print(l.shape)
+            #             # print(l[:5,:5])
+            #             # print(l[-5:,-5:])
+            #             print(l.sum(dim=0).shape, l.sum(dim=0)[:32]) 
+            #             print(l.sum(dim=1).shape, l.sum(dim=1)[:32])
+            #             print(l.sum(), flush=True)
+            #             w = gptq[name].w0.data.cpu()
+            #             print(w[:5,:5])
+            #             print(w[-5:,-5:])
+
+            #             q = gptq[name].layer.weight.data.cpu()
+            #             print(q[:5,:5])
+            #             print(q[-5:,-5:])
+
+            #             h = gptq[name].H.data.cpu()
+            #             print(h.shape)
+            #             print(h[:5,:5])
+            #             print(h[-5:,-5:])
+            #             print("===")
+            #         if 'experts.2' in name and layer_idx == 2:
+            #             assert False, "Stop"
+
+            sum_loss = 0.0
             for name in qmodule.keys():
                 if gptq[name] is not None:
                     gptq[name].free()
                     del gptq[name]
+                if loss[name] is not None:
+                    sum_loss += loss[name].sum().item()
+                    del loss[name]
 
             tick2 = time.time()
-            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} last op {name} loss: {loss[name].sum():.6f}", flush=True)
+            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} loss: {sum_loss:.6f}", flush=True)
             del qmodule
 
         del qmodule_all
