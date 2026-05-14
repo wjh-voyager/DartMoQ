@@ -215,23 +215,23 @@ def get_qwen3_moe(model_path):
 
 def get_qwen3_30b_a3b(model_path):
     from transformers import Qwen3MoeForCausalLM
-    # device_map = {
-    #             "model.embed_tokens": "cuda:0",
-    #             "model.rotary_emb": "cuda:0",
-    #             **{
-    #                 f"model.layers.{k}": "cuda:0" for k in range(0, 16)
-    #             },
-    #             **{
-    #                 f"model.layers.{k}": "cuda:1" for k in range(16, 32)
-    #             },
-    #             **{
-    #                 f"model.layers.{k}": "cpu" for k in range(32, 48)
-    #             },
-    #             "model.norm": "cpu",
-    #             "lm_head": "cpu",
-    #         }
+    device_map = {
+                "model.embed_tokens": "cuda:0",
+                "model.rotary_emb": "cuda:0",
+                **{
+                    f"model.layers.{k}": "cuda:0" for k in range(0, 16)
+                },
+                **{
+                    f"model.layers.{k}": "cuda:1" for k in range(16, 32)
+                },
+                **{
+                    f"model.layers.{k}": "cpu" for k in range(32, 48)
+                },
+                "model.norm": "cpu",
+                "lm_head": "cpu",
+            }
     # print(device_map)
-    device_map = 'auto'
+    # device_map = 'auto'
     model = Qwen3MoeForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
@@ -302,6 +302,7 @@ def get_auto(model_path):
     return model, tokenizer
 
 def load_model(model_path):
+    print(model_path.lower())
     if 'llava' in model_path.lower():
         model = get_llava(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -342,13 +343,15 @@ def load_model(model_path):
             model.model_id = 'qwen3-4b'
         elif 'qwen3-8b' in model_path.lower():
             model.model_id = 'qwen3-8b'
-    elif 'qwen2.5' or 'qwen2___5' in model_path.lower():
+    elif 'qwen2.5' in model_path.lower() or 'qwen2___5' in model_path.lower():
         model, tokenizer = get_auto(model_path)
         model.model_id = 'qwen2.5'
+        print(model_path.lower(), model.model_id)
     elif 'moonlight' in model_path.lower():
         model = get_moonlight(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         model.model_id = 'moonlight'
+        print(model_path.lower(), model.model_id)
     else:
         assert False, "Model type not supported."
     model.eval()

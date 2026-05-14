@@ -196,7 +196,7 @@ class GPTQ:
             self.quantizer.find_params(W, weight=True)
         # [K, K]
         H = self.H
-        del self.H
+        # del self.H
         dead = torch.diag(H) == 0
         H[dead, dead] = 1
         W[:, dead] = 0
@@ -592,4 +592,3 @@ if __name__ == '__main__':
     evaluator = Evaluator(tokenizer, model_id, "wikitext2")
     model = model.to(DEV)
     evaluator.eval_ppl(model, input_len=4096)
-    

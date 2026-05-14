@@ -1,6 +1,3 @@
-from dartmoq_hybridmoe import DartMoQLinear
-from dartmoq_hybridmoe import DartMoQHybridMoE
-from dartmoq_hybridmoe import restructure_hybrid_qscheme
 import torch
 import torch.nn as nn
 import os
@@ -14,6 +11,8 @@ from dp_utils import enum_optimal_m_scheme_fast_general
 from dp_utils import extrapolate_0bit_loss
 from tool_utils import *
 from collections import Counter
+from dartmoq_hybridmoe import DartMoQHybridWrapper
+from dartmoq_hybridmoe import restructure_hybrid_qscheme
 
 DEV = torch.device('cuda:0')
 
@@ -31,7 +30,6 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     if use_hybrid_moe:
         # Hybrid MoE: keep original expert count at first level
         new_expert_num = ori_expert_num
-        scaling_factor = slice_expert_num
     else:
         new_expert_num = ori_expert_num * slice_expert_num 
         scaling_factor = slice_expert_num
@@ -40,7 +38,6 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     
     if use_hybrid_moe:
         # Hybrid MoE uses nested structure: experts -> sub-experts
-        new_router = nn.Linear(model.config.hidden_size, new_expert_num, dtype=ori_router_gate.dtype, bias=False).to(device)
         all_new_experts = []  # List of lists (each expert has sub-experts)
     else:
         if type(layer.mlp.gate) == nn.Linear:
@@ -162,16 +159,15 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
 
         if all_new_expert_rates is not None:
             _, sorted_index = torch.sort(torch.tensor(all_new_expert_rates), descending=True)
-            sect_ = n_experts // slice_expert_num
-            # print(e_bits, sect_, n_experts)
-            qscheme['expert'] = [[0] * slice_expert_num for i in range(n_experts // slice_expert_num)]
+            # print(e_bits, sect_, new_expert_num)
+            qscheme['expert'] = [[0] * slice_expert_num for i in range(ori_expert_num)]
             for i, idx in enumerate(sorted_index):
                 # print(idx, all_new_expert_rates[idx])
                 xi = int(idx // slice_expert_num)
                 xj = int(idx % slice_expert_num)
-                qscheme['expert'][xi][xj] = e_bits[i // sect_]
+                qscheme['expert'][xi][xj] = e_bits[i // ori_expert_num]
     else:
-        qscheme['expert'] = [qscheme['econfig'] for i in range(n_experts // slice_expert_num)]
+        qscheme['expert'] = [qscheme['econfig'] for i in range(ori_expert_num)]
     
     # For hybrid MoE: restructure qscheme to group by bit config
     if use_hybrid_moe:
@@ -231,7 +227,6 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
             expert_to_subexperts.append(list(range(len(expert_sub_experts))))
             
             # For hybrid MoE, router stays the same (one entry per original expert)
-            new_router.weight.data[expert_idx, :] = ori_router_gate.data[expert_idx, :].unsqueeze(0).to(device).detach().clone()
         else:
             # Original behavior: create separate expert for each slice
             for ii, group_indices in enumerate(expert_groups):
@@ -269,21 +264,23 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
     print("all_new_expert_rates:", len(all_new_expert_rates))
 
     if use_hybrid_moe:
-        # Create hybrid MoE
-        moe = DartMoQHybridMoE(model.config).to(device)
-        moe.gate = new_router
-        # Convert list of lists to ModuleList of ModuleLists
-        moe.experts = nn.ModuleList([nn.ModuleList(sub_experts) for sub_experts in all_new_experts])
-        moe.sub_expert_bit_configs = sub_expert_bit_configs
-        moe.expert_to_subexperts = expert_to_subexperts
+        # Create hybrid MoE using the original model's MLP class
+        moe = layer.mlp.__class__(model.config).to(device)
         
-        counter = Counter(moe.sub_expert_bit_configs)
+        # Keep gate and top_k configuration consistent with original
+        moe.gate = layer.mlp.gate
+        moe.num_experts = len(all_new_experts)
+        
+        # Replace experts with nn.ModuleList of DartMoQHybridWrapper wrappers
+        # Each DartMoQHybridWrapper wraps multiple sub-experts with different bit configs
+        moe.experts = nn.ModuleList([DartMoQHybridWrapper(sub_experts) for sub_experts in all_new_experts])
+        
+        counter = Counter(sub_expert_bit_configs)
         print("reconstruct moe with sub_expert_bit_configs: ", counter) 
-        if hasattr(layer.mlp, 'shared_experts'):
-            moe.set_shared_experts(layer.mlp.shared_experts)
         
-        # Set return type based on model type: DeepSeek models expect single tensor return, Qwen3-MoE expects tuple return
-        moe.return_tuple = model.config.model_type in ['olmoe', 'qwen3_moe', 'qwen3']
+        # Copy shared_experts if exists
+        if hasattr(layer.mlp, 'shared_experts'):
+            moe.shared_experts = layer.mlp.shared_experts
     else:
         # Original behavior
         moe = layer.mlp.__class__(model.config).to(device)

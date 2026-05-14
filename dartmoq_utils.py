@@ -518,36 +518,36 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
             for ss in streams:
                 ss.synchronize()
 
-            # for name in gptq.keys():
-            #     if 'up' in name or 'down' in name:
-            #         if 'experts.0.' in name or 'experts.1.' in name or 'experts.2.' in name:
-            #             l = loss[name].cpu()
-            #             print(name)
-            #             # print(gptq[name].rows, gptq[name].columns, gptq[name].nsamples)
-            #             # c = gptq[name].quantizer
-            #             # print(c.bits, c.perchannel, c.sym, c.mse, c.norm, c.grid, c.maxshrink)
-            #             print(l.shape)
-            #             # print(l[:5,:5])
-            #             # print(l[-5:,-5:])
-            #             print(l.sum(dim=0).shape, l.sum(dim=0)[:32]) 
-            #             print(l.sum(dim=1).shape, l.sum(dim=1)[:32])
-            #             print(l.sum(), flush=True)
-            #             w = gptq[name].w0.data.cpu()
-            #             print(w.shape, gptq[name].rows, gptq[name].columns)
-            #             print(w[:5,:5])
-            #             print(w[-5:,-5:])
+            for name in gptq.keys():
+                if 'up' in name or 'down' in name:
+                    if 'experts.0.' in name or 'experts.1.' in name or 'experts.2.' in name:
+                        l = loss[name].cpu()
+                        print(name)
+                        # print(gptq[name].rows, gptq[name].columns, gptq[name].nsamples)
+                        # c = gptq[name].quantizer
+                        # print(c.bits, c.perchannel, c.sym, c.mse, c.norm, c.grid, c.maxshrink)
+                        print(l.shape)
+                        # print(l[:5,:5])
+                        # print(l[-5:,-5:])
+                        print(l.sum(dim=0).shape, l.sum(dim=0)[:32]) 
+                        print(l.sum(dim=1).shape, l.sum(dim=1)[:32])
+                        print(l.sum(), flush=True)
+                        w = gptq[name].w0.data.cpu()
+                        print(w.shape, gptq[name].rows, gptq[name].columns)
+                        print(w[:5,:5])
+                        print(w[-5:,-5:])
 
-            #             q = gptq[name].layer.weight.data.cpu()
-            #             print(q[:5,:5])
-            #             print(q[-5:,-5:])
+                        q = gptq[name].layer.weight.data.cpu()
+                        print(q[:5,:5])
+                        print(q[-5:,-5:])
 
-            #             # h = gptq[name].H.data.cpu()
-            #             # print(h.shape)
-            #             # print(h[:5,:5])
-            #             # print(h[-5:,-5:])
-            #             print("===")
-            #         if 'experts.2' in name and layer_idx == 2:
-            #             assert False, "Stop"
+                        h = gptq[name].H.data.cpu()
+                        print(h.shape)
+                        print(h[:5,:5])
+                        print(h[-5:,-5:])
+                        print("===")
+                    if 'experts.2' in name and layer_idx == 2:
+                        assert False, "Stop"
 
             sum_loss = 0.0
             for name in qmodule.keys():
