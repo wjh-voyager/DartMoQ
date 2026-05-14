@@ -1,3 +1,4 @@
+from dartmoq_hybridmoe import DartMoQLinear
 from dartmoq_hybridmoe import DartMoQHybridMoE
 from dartmoq_hybridmoe import restructure_hybrid_qscheme
 import torch
@@ -211,8 +212,9 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 # print(bit, indices)
                 # if expert_idx < 2:
                 #     print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}, indices[:5]={indices[:5]} {indices[-5:]}")
-                
-                expert_mlp = expert.__class__(model.config).to(device)
+                new_config = model.config
+                new_config.intermediate_size = n_neurons
+                expert_mlp = expert.__class__(new_config).to(device)
                 
                 with torch.no_grad():
                     indices_tensor = torch.tensor(indices, dtype=torch.long, device=ori_gate_proj_weights.device)
@@ -236,7 +238,9 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 n_neurons = len(group_indices)
                 # if expert_idx < 2:
                 #     print(f"layer {layer_idx} expert {expert_idx} slice {ii} n_neurons={n_neurons}, group_indices={group_indices[:5]} {group_indices[-5:]}")
-                expert_mlp = expert.__class__(model.config).to(device)
+                new_config = model.config
+                new_config.intermediate_size = n_neurons
+                expert_mlp = expert.__class__(new_config).to(device)
                 
                 with torch.no_grad():
                     group_indices_tensor = torch.tensor(group_indices, dtype=torch.long, device=ori_gate_proj_weights.device)

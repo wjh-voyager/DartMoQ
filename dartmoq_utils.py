@@ -533,6 +533,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
             #             print(l.sum(dim=1).shape, l.sum(dim=1)[:32])
             #             print(l.sum(), flush=True)
             #             w = gptq[name].w0.data.cpu()
+            #             print(w.shape, gptq[name].rows, gptq[name].columns)
             #             print(w[:5,:5])
             #             print(w[-5:,-5:])
 
@@ -540,10 +541,10 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
             #             print(q[:5,:5])
             #             print(q[-5:,-5:])
 
-            #             h = gptq[name].H.data.cpu()
-            #             print(h.shape)
-            #             print(h[:5,:5])
-            #             print(h[-5:,-5:])
+            #             # h = gptq[name].H.data.cpu()
+            #             # print(h.shape)
+            #             # print(h[:5,:5])
+            #             # print(h[-5:,-5:])
             #             print("===")
             #         if 'experts.2' in name and layer_idx == 2:
             #             assert False, "Stop"

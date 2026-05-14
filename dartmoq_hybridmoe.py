@@ -50,6 +50,9 @@ class DartMoQHybridMoE(nn.Module):
             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
 
+        if self.shared_experts is not None:
+            final_hidden_states = final_hidden_states + self.shared_experts(hidden_states)
+
         if self.return_tuple:
             return final_hidden_states, router_logits
         else:
@@ -70,15 +73,34 @@ class DartMoQHybridMoE(nn.Module):
     def set_shared_experts(self, shared_experts):
         self.shared_experts = shared_experts
 
-
-class DartMoQLinear(nn.Module):
-    def __init__(self, config):
+class DartMoQMLP(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.config = config
-        self.linear = nn.Linear(config.hidden_size, config.hidden_size)
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.act_fn = nn.SiLU()
+
+    def forward(self, x):
+        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return down_proj
+    
+class DartMoQLinear(nn.Module):
+    def __init__(self, all_new_experts):
+        super().__init__()
+        self.experts = nn.ModuleList([nn.ModuleList(sub_experts) for sub_experts in all_new_experts])
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return self.linear(hidden_states)
+        assert len(self.experts) > 0
+        
+        # Process each sub-expert and accumulate results
+        total_output = torch.zeros_like(hidden_states)
+        
+        for sub_expert in self.experts:
+            sub_expert_output = sub_expert(hidden_states)
+            total_output = total_output + sub_expert_output
+        
+        return total_output
 
 def restructure_hybrid_qscheme(qscheme_expert, slice_expert_num):
 
