@@ -393,7 +393,7 @@ def analyze_quant_outlier(layer, layer_idx, hidden_states, ori_expert_num, wbits
 @torch.no_grad()
 def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_expert_num,
                 attn_hidden_states, ffn_hidden_states, attention_mask, position_ids, position_embeddings, 
-                qscheme):
+                qscheme, use_hybrid_moe):
     print(f"Quantize layer {layer_idx}")
     nsample = attn_hidden_states.shape[0]
     assert attn_hidden_states.shape[0] == ffn_hidden_states.shape[0], f"attn_hidden_states.shape: {attn_hidden_states.shape}, ffn_hidden_states.shape: {ffn_hidden_states.shape}"
@@ -409,9 +409,6 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
     else:
         filters = ffn_filters
     
-    # Check if using hybrid MoE
-    use_hybrid_moe = hasattr(layer.mlp, 'sub_expert_bit_configs')
-
     for ff in filters:
         qmodule_all = find_layers(layer, filters=[ff])
         qbatch = QBATCH
@@ -434,15 +431,24 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
                 else:
                     # Check for hybrid MoE structure: mlp.experts.expert_idx.sub_expert_idx.proj
-                    hybrid_match = re.search(r'mlp\.experts\.(\d+)\.(\d+)\.', name)
-                    if hybrid_match and use_hybrid_moe:
+                    if use_hybrid_moe:
                         # Hybrid MoE: mlp.experts.expert_idx.sub_expert_idx
-                        expert_id = int(hybrid_match.group(1))
-                        sub_expert_id = int(hybrid_match.group(2))
-                        bit_config = qscheme['expert'][expert_id]
-                        # print(bit_config, expert_id, sub_expert_id, bit_config[sub_expert_id], name)
-                        bit = bit_config[sub_expert_id]
-                        gptq[name].quantizer.configure(bit, perchannel=True, sym=sym, mse=False)
+                        print(name)
+                        hybrid_match = re.search(r'mlp\.experts\.(\d+)\.sub_expert_(\d+)\.', name)
+                        if not hybrid_match: ## shared expert or standard mlp
+                            if 'share' in name:
+                                bit = qscheme['share']
+                                gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                            else:
+                                bit = qscheme['share'] # standard mlp, like 1st layer in deepseek model, use same bit as share expert
+                                gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                        else:
+                            expert_id = int(hybrid_match.group(1))
+                            sub_expert_id = int(hybrid_match.group(2))
+                            bit_config = qscheme['expert'][expert_id]
+                            # print(bit_config, expert_id, sub_expert_id, bit_config[sub_expert_id], name)
+                            bit = bit_config[sub_expert_id]
+                            gptq[name].quantizer.configure(bit, perchannel=True, sym=sym, mse=False)
                     else:
                         # Standard MoE structure
                         match = re.search(r'mlp\.experts\.(\d+)', name)

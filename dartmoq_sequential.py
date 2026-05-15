@@ -19,8 +19,7 @@ DEV = torch.device('cuda:0')
 @torch.no_grad()
 def reconstruct_moe_from_existing(model, layer, layer_idx, inps, 
                                   n_experts, n_activated, slice_expert_num, 
-                                  ori_activated, device, qscheme, args):
-    use_hybrid_moe = getattr(args, 'use_hybrid_moe', False)
+                                  ori_activated, device, qscheme, use_hybrid_moe, args):
 
     if "global" in args.quant_scheme :
         expert_activation_rates = analyze_experts_activation(layer, layer_idx, inps, ori_activated, model.config.model_type)
@@ -350,11 +349,13 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
     is_moe_layer = hasattr(layer.mlp, 'gate') or hasattr(layer.mlp, 'experts') ## some moe model has no expert layer in the first few layers,
     
     tick0 = time.time()
+    use_hybrid_moe = getattr(args, 'use_hybrid_moe', False)
+
     if moe_model_flag:
         if is_moe_layer:
             moe = reconstruct_moe_from_existing(model, layer, layer_idx, hidden_states, 
                                                 n_experts, n_activated, slice_expert_num, ori_activated, device,
-                                                qscheme, args)
+                                                qscheme, use_hybrid_moe, args)
             layer.mlp = moe
     else:
         # moe = reconstruct_moe_from_dense(model, layer, layer_idx, hidden_states, n_experts, n_activated, slice_expert_num, device, args)
@@ -369,7 +370,7 @@ def construct_moe(model, moe_model_flag, layer, layer_idx, inp,
     if_quant_attn = True
     quant_layer_mix_precision(layer, layer_idx, if_quant_attn, n_experts, slice_expert_num,
                 hidden_states_inorm, hidden_states, attention_mask, position_ids, position_embeddings, 
-                qscheme)
+                qscheme, use_hybrid_moe)
     gc.collect()
     torch.cuda.empty_cache()
     tick1 = time.time()
