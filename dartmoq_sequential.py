@@ -281,6 +281,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
         # Copy shared_experts if exists
         if hasattr(layer.mlp, 'shared_experts'):
             moe.shared_experts = layer.mlp.shared_experts
+        moe.training = False
     else:
         # Original behavior
         moe = layer.mlp.__class__(model.config).to(device)
