@@ -433,15 +433,17 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     # Check for hybrid MoE structure: mlp.experts.expert_idx.sub_expert_idx.proj
                     if use_hybrid_moe:
                         # Hybrid MoE: mlp.experts.expert_idx.sub_expert_idx
-                        print(name)
+                        # print(name)
                         hybrid_match = re.search(r'mlp\.experts\.(\d+)\.sub_expert_(\d+)\.', name)
                         if not hybrid_match: ## shared expert or standard mlp
                             if 'share' in name:
                                 bit = qscheme['share']
                                 gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                                print(f"share expert: {name}, bit: {bit[0]}")
                             else:
                                 bit = qscheme['share'] # standard mlp, like 1st layer in deepseek model, use same bit as share expert
                                 gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
+                                print(f"normal expert: {name}, bit: {bit[0]}")
                         else:
                             expert_id = int(hybrid_match.group(1))
                             sub_expert_id = int(hybrid_match.group(2))
@@ -456,7 +458,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                         if expert_id == -1:
                             bit = qscheme['share']
                             gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
-                            print(f"share module: {name}, bit: {bit[0]}")
+                            print(f"share expert: {name}, bit: {bit[0]}")
                         else:
                             bit = qscheme['expert']
                             gptq[name].quantizer.configure(bit[expert_id // slice_expert_num][expert_id % slice_expert_num], perchannel=True, sym=sym, mse=False)
@@ -523,37 +525,6 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
 
             for ss in streams:
                 ss.synchronize()
-
-            # for name in gptq.keys():
-            #     if 'up' in name or 'down' in name:
-            #         if 'experts.0.' in name or 'experts.1.' in name or 'experts.2.' in name:
-            #             l = loss[name].cpu()
-            #             print(name)
-            #             # print(gptq[name].rows, gptq[name].columns, gptq[name].nsamples)
-            #             # c = gptq[name].quantizer
-            #             # print(c.bits, c.perchannel, c.sym, c.mse, c.norm, c.grid, c.maxshrink)
-            #             print(l.shape)
-            #             # print(l[:5,:5])
-            #             # print(l[-5:,-5:])
-            #             print(l.sum(dim=0).shape, l.sum(dim=0)[:32]) 
-            #             print(l.sum(dim=1).shape, l.sum(dim=1)[:32])
-            #             print(l.sum(), flush=True)
-            #             w = gptq[name].w0.data.cpu()
-            #             print(w.shape, gptq[name].rows, gptq[name].columns)
-            #             print(w[:5,:5])
-            #             print(w[-5:,-5:])
-
-            #             q = gptq[name].layer.weight.data.cpu()
-            #             print(q[:5,:5])
-            #             print(q[-5:,-5:])
-
-            #             h = gptq[name].H.data.cpu()
-            #             print(h.shape)
-            #             print(h[:5,:5])
-            #             print(h[-5:,-5:])
-            #             print("===")
-            #         if 'experts.2' in name and layer_idx == 2:
-            #             assert False, "Stop"
 
             sum_loss = 0.0
             for name in qmodule.keys():
