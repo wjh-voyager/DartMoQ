@@ -204,6 +204,7 @@ def reconstruct_moe_from_existing(model, layer, layer_idx, inps,
                 indices = bit_to_indices[bit]
                 n_neurons = len(indices)
 
+                # print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}")
                 # print(bit, indices)
                 # if expert_idx < 2:
                 #     print(f"layer {layer_idx} expert {expert_idx} bit={bit} n_neurons={n_neurons}, indices[:5]={indices[:5]} {indices[-5:]}")

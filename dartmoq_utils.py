@@ -1,3 +1,4 @@
+from collections import Counter
 from urllib.parse import scheme_chars
 import math
 import random
@@ -414,6 +415,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
         qbatch = QBATCH
         gptq = {}
         loss = {}
+        bit_set = []
 
         for qmi in range(0, len(qmodule_all.keys()), qbatch):
             tick0 = time.time()
@@ -451,6 +453,8 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                             # print(bit_config, expert_id, sub_expert_id, bit_config[sub_expert_id], name)
                             bit = bit_config[sub_expert_id]
                             gptq[name].quantizer.configure(bit, perchannel=True, sym=sym, mse=False)
+                            bit_set.append(bit)
+                            # print(f"hybrid expert: {name}, bit: {bit}")
                     else:
                         # Standard MoE structure
                         match = re.search(r'mlp\.experts\.(\d+)', name)
@@ -460,8 +464,9 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                             gptq[name].quantizer.configure(bit[0], perchannel=True, sym=sym, mse=False)
                             print(f"share expert: {name}, bit: {bit[0]}")
                         else:
-                            bit = qscheme['expert']
-                            gptq[name].quantizer.configure(bit[expert_id // slice_expert_num][expert_id % slice_expert_num], perchannel=True, sym=sym, mse=False)
+                            bit = qscheme['expert'][expert_id // slice_expert_num][expert_id % slice_expert_num]
+                            gptq[name].quantizer.configure(bit, perchannel=True, sym=sym, mse=False)
+                            bit_set.append(bit)
 
             def add_batch(name):
                 def tmp(_, inp, out):
@@ -536,7 +541,7 @@ def quant_layer_mix_precision(layer, layer_idx, quant_attn, n_experts, slice_exp
                     del loss[name]
 
             tick2 = time.time()
-            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))} time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} loss: {sum_loss:.6f}", flush=True)
+            print(f"Quantize layer {layer_idx} {ff} {qmi}:{qmi + min(qbatch, len(qmodule.keys()))}  time: {tick1 - tick0:.4f} + {tick2 - tick1:.4f} bit_set: {Counter(bit_set)} loss: {sum_loss:.6f}", flush=True)
             del qmodule
 
         del qmodule_all
