@@ -107,4 +107,4 @@ if __name__ == '__main__':
 
     rt = time.time() - tick1
     print(f"Runtime of training-free construction (ppl): {tick1 - tick:.2f}")
-    print(f"Runtime of fine-tuning construction: {rt:.2f}")
+    # print(f"Runtime of fine-tuning construction: {rt:.2f}")
